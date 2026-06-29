@@ -1,5 +1,6 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include "../include/WhpxBackend.h"
+#include "../include/xgpu_protocol.h"
 #include <iostream>
 
 WhpxBackend::~WhpxBackend() {
@@ -158,10 +159,17 @@ bool WhpxBackend::run_loop() {
                 if (mem.Gpa == 0x3FFFF000 && mem.AccessInfo.IsWrite) {
                     void* host_vram = mapped_regions_[0x40000000];
                     if (host_vram) {
-                        uint32_t* cmd_buf = (uint32_t*)host_vram;
-                        std::cout << "[host x-gpu] doorbell rung! command buffer head: 0x" 
-                                  << std::hex << *cmd_buf << std::dec << std::endl;
-                        if (*cmd_buf == 0xFF0000) {
+                        XGpuCommand* cmd = (XGpuCommand*)host_vram;
+                        std::cout << "[host x-gpu] doorbell rung! command: 0x" << std::hex << cmd->command_id 
+                                  << ", size: " << std::dec << cmd->payload_size 
+                                  << ", offset: 0x" << std::hex << cmd->vram_offset << std::dec << std::endl;
+                        if (cmd->command_id == XGPU_CMD_INIT) {
+                            std::cout << "[host x-gpu] initializing host Vulkan context..." << std::endl;
+                        } else if (cmd->command_id == XGPU_CMD_ALLOC_MEM) {
+                            std::cout << "[host x-gpu] allocating " << cmd->payload_size << " bytes on physical host GPU." << std::endl;
+                        } else if (cmd->command_id == XGPU_CMD_VK_SUBMIT) {
+                            std::cout << "[host x-gpu] submitting guest command queue (vkQueueSubmit)!" << std::endl;
+                        } else if (cmd->command_id == 0xFF0000) {
                             std::cout << "[host x-gpu renderer] received framebuffer trigger! rendering red frame (color 0xFF0000)!" << std::endl;
                         }
                     }

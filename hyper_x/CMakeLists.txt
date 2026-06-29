@@ -13,3 +13,8 @@ add_executable(hyper_x
 if(WIN32)
     target_link_libraries(hyper_x PRIVATE WinHvPlatform)
 endif()
+
+# compile guest vulkan proxy library
+add_library(libvulkan_hyperx SHARED src/libvulkan_hyperx.cpp)
+# disable prefix on windows so it matches standard library names
+set_target_properties(libvulkan_hyperx PROPERTIES PREFIX "")
