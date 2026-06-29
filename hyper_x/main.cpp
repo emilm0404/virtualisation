@@ -16,7 +16,7 @@ const unsigned char GUEST_CODE[] = {
 };
 
 int main() {
-    std::cout << "starting hyper-v scratch remake utilizing windows hypervisor platform (whp)..." << std::endl;
+    std::cout << "starting hyper-x scratch hypervisor utilizing windows hypervisor platform (whp)..." << std::endl;
 
     // check if the hypervisor is present on host.
     WHV_CAPABILITY capability;
