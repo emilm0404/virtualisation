@@ -199,6 +199,75 @@ async def handle_storage(args, provider):
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
+# clones a VM using name and clone_name.
+async def handle_clone(args, provider):
+    try:
+        print(f"cloning vm '{args.name}' to '{args.clone_name}'...")
+        await provider.clone_vm(args.name, args.clone_name)
+        print("vm cloned successfully.")
+    except VMException as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# exports a VM to export_path.
+async def handle_export(args, provider):
+    try:
+        print(f"exporting vm '{args.name}' to '{args.export_path}'...")
+        await provider.export_vm(args.name, args.export_path)
+        print("vm exported successfully.")
+    except VMException as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# runs shell command in guest OS.
+async def handle_execute(args, provider):
+    try:
+        print(f"executing command on vm '{args.name}'...")
+        out = await provider.execute_command(
+            args.name, args.guest_command,
+            username=args.username, password=args.password
+        )
+        sys.stdout.write(out)
+    except VMException as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# copies host file to guest path.
+async def handle_copy(args, provider):
+    try:
+        print(f"copying '{args.host_path}' to '{args.guest_path}' inside vm '{args.name}'...")
+        await provider.copy_file_to_guest(
+            args.name, args.host_path, args.guest_path,
+            username=args.username, password=args.password
+        )
+        print("file copied successfully.")
+    except VMException as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# manages hot-plugging of devices.
+async def handle_device(args, provider):
+    try:
+        if args.device_action == "attach-disk":
+            print(f"attaching disk '{args.disk_path}' to vm '{args.name}'...")
+            await provider.attach_disk(args.name, args.disk_path, controller_type=args.controller)
+            print("disk attached successfully.")
+        elif args.device_action == "detach-disk":
+            print(f"detaching disk '{args.disk_path}' from vm '{args.name}'...")
+            await provider.detach_disk(args.name, args.disk_path)
+            print("disk detached successfully.")
+        elif args.device_action == "attach-nic":
+            print(f"attaching nic switch '{args.switch_name}' to vm '{args.name}'...")
+            mac = await provider.add_network_adapter(args.name, args.switch_name)
+            print(f"nic attached successfully. mac address: {mac}")
+        elif args.device_action == "detach-nic":
+            print(f"detaching nic mac '{args.mac}' from vm '{args.name}'...")
+            await provider.remove_network_adapter(args.name, args.mac)
+            print("nic detached successfully.")
+    except VMException as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
 def handle_daemon(args):
     import uvicorn
     print(f"Starting virtual-pyd daemon on {args.host}:{args.port}...")
@@ -456,6 +525,40 @@ async def run():
     cluster_p.add_argument("--iso", help="path to boot iso")
     cluster_p.add_argument("--cloud-init", help="json string for cloud-init config")
 
+    # clone
+    clone_p = subparsers.add_parser("clone", help="clone an existing vm")
+    clone_p.add_argument("name", help="name of the vm to clone")
+    clone_p.add_argument("clone_name", help="name of the new clone")
+
+    # export
+    export_p = subparsers.add_parser("export", help="export vm configuration and disk")
+    export_p.add_argument("name", help="name of the vm to export")
+    export_p.add_argument("export_path", help="target directory path on the host")
+
+    # execute
+    exec_p = subparsers.add_parser("execute", help="execute command in guest os")
+    exec_p.add_argument("name", help="name of the vm")
+    exec_p.add_argument("guest_command", help="shell command string to execute")
+    exec_p.add_argument("--username", help="guest administrator/root username")
+    exec_p.add_argument("--password", help="guest administrator/root password")
+
+    # copy
+    copy_p = subparsers.add_parser("copy", help="copy file to guest os")
+    copy_p.add_argument("name", help="name of the vm")
+    copy_p.add_argument("host_path", help="local file path on host")
+    copy_p.add_argument("guest_path", help="target file path inside guest")
+    copy_p.add_argument("--username", help="guest administrator/root username")
+    copy_p.add_argument("--password", help="guest administrator/root password")
+
+    # device hot-plugging
+    dev_p = subparsers.add_parser("device", help="manage hardware devices (disks, nics)")
+    dev_p.add_argument("device_action", choices=["attach-disk", "detach-disk", "attach-nic", "detach-nic"], help="action to perform")
+    dev_p.add_argument("name", help="name of the vm")
+    dev_p.add_argument("--disk-path", help="disk file path (for attach/detach disk)")
+    dev_p.add_argument("--controller", help="controller type (for attach-disk only)")
+    dev_p.add_argument("--switch-name", help="network switch/bridge name (for attach-nic only)")
+    dev_p.add_argument("--mac", help="nic MAC address (for detach-nic only)")
+
     args = parser.parse_args()
     
     if args.command == "daemon":
@@ -516,6 +619,22 @@ async def run():
         if args.storage_action == "create" and not args.path:
             parser.error("--path is required for storage pool creation")
         await handle_storage(args, provider)
+    elif args.command == "clone":
+        await handle_clone(args, provider)
+    elif args.command == "export":
+        await handle_export(args, provider)
+    elif args.command == "execute":
+        await handle_execute(args, provider)
+    elif args.command == "copy":
+        await handle_copy(args, provider)
+    elif args.command == "device":
+        if args.device_action in ["attach-disk", "detach-disk"] and not args.disk_path:
+            parser.error(f"--disk-path is required for action '{args.device_action}'")
+        if args.device_action == "attach-nic" and not args.switch_name:
+            parser.error("--switch-name is required for action 'attach-nic'")
+        if args.device_action == "detach-nic" and not args.mac:
+            parser.error("--mac is required for action 'detach-nic'")
+        await handle_device(args, provider)
 
 def main():
     asyncio.run(run())

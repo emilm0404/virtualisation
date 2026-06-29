@@ -109,27 +109,59 @@ class RemoteProvider(VMProvider):
             uptime_seconds=data["uptime_seconds"]
         )
 
-    # Placeholders for unimplemented methods in REST API for now
+    # checkpoint commands over rest.
     async def create_checkpoint(self, vm_name: str, checkpoint_name: str) -> bool:
-        raise NotImplementedError("Checkpoints not yet implemented in REST API")
+        await self._request("POST", f"/vms/{vm_name}/checkpoints", json={"name": checkpoint_name})
+        return True
+
     async def restore_checkpoint(self, vm_name: str, checkpoint_name: str) -> bool:
-        raise NotImplementedError("Checkpoints not yet implemented in REST API")
+        await self._request("POST", f"/vms/{vm_name}/checkpoints/{checkpoint_name}/restore")
+        return True
+
     async def delete_checkpoint(self, vm_name: str, checkpoint_name: str) -> bool:
-        raise NotImplementedError("Checkpoints not yet implemented in REST API")
+        await self._request("DELETE", f"/vms/{vm_name}/checkpoints/{checkpoint_name}")
+        return True
+
     async def list_checkpoints(self, vm_name: str) -> List[str]:
-        raise NotImplementedError("Checkpoints not yet implemented in REST API")
+        return await self._request("GET", f"/vms/{vm_name}/checkpoints")
+
+    # guest command execution over rest.
     async def execute_command(self, vm_name: str, command: str, username: Optional[str] = None, password: Optional[str] = None) -> str:
-        raise NotImplementedError("Execution not yet implemented in REST API")
+        data = await self._request("POST", f"/vms/{vm_name}/execute", json={"command": command, "username": username, "password": password})
+        return data["output"]
+
+    # guest file transfer over rest.
     async def copy_file_to_guest(self, vm_name: str, host_path: str, guest_path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        raise NotImplementedError("File copy not yet implemented in REST API")
+        import base64
+        with open(host_path, "rb") as f:
+            content = f.read()
+        b64_str = base64.b64encode(content).decode("utf-8")
+        payload = {
+            "guest_path": guest_path,
+            "file_content_b64": b64_str,
+            "username": username,
+            "password": password
+        }
+        await self._request("POST", f"/vms/{vm_name}/copy-to-guest", json=payload)
+        return True
+
+    # disk hot-plugging over rest.
     async def attach_disk(self, vm_name: str, disk_path: str, controller_type: Optional[str] = None) -> bool:
-        raise NotImplementedError("Disk attachment not yet implemented in REST API")
+        await self._request("POST", f"/vms/{vm_name}/disks", json={"disk_path": disk_path, "controller_type": controller_type})
+        return True
+
     async def detach_disk(self, vm_name: str, disk_path: str) -> bool:
-        raise NotImplementedError("Disk attachment not yet implemented in REST API")
+        await self._request("DELETE", f"/vms/{vm_name}/disks", json={"disk_path": disk_path})
+        return True
+
+    # nic hot-plugging over rest.
     async def add_network_adapter(self, vm_name: str, switch_name: str) -> str:
-        raise NotImplementedError("Network adapter management not yet implemented in REST API")
+        data = await self._request("POST", f"/vms/{vm_name}/network-adapters", json={"switch_name": switch_name})
+        return data["mac_address"]
+
     async def remove_network_adapter(self, vm_name: str, adapter_mac: str) -> bool:
-        raise NotImplementedError("Network adapter management not yet implemented in REST API")
+        await self._request("DELETE", f"/vms/{vm_name}/network-adapters/{adapter_mac}")
+        return True
 
     async def migrate_vm(self, vm_name: str, target_host: str, **kwargs) -> bool:
         await self._request("POST", f"/vms/{vm_name}/migrate", json={"target_host": target_host})

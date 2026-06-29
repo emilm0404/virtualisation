@@ -48,6 +48,12 @@ class MockProvider(VMProvider):
     async def migrate_vm(self, vm_name, target_host, **kwargs):
         if vm_name == "missing": raise VMNotFoundError("missing")
         return True
+    async def clone_vm(self, vm_name, clone_name): return True
+    async def export_vm(self, vm_name, export_path): return True
+    async def create_storage_pool(self, name, path): return True
+    async def delete_storage_pool(self, name): return True
+    async def list_storage_pools(self): return ["pool1"]
+    async def list_snapshots(self, vm_name): return ["snap1"]
 
 app.dependency_overrides[get_vm_provider] = lambda: MockProvider()
 client = TestClient(app)
@@ -97,3 +103,43 @@ def test_api_migrate():
 
     response_missing = client.post("/vms/missing/migrate", json={"target_host": "192.168.1.50"})
     assert response_missing.status_code == 404
+
+def test_api_checkpoints():
+    res = client.get("/vms/testvm/checkpoints")
+    assert res.status_code == 200
+    assert res.json() == ["snap1"]
+
+    res = client.post("/vms/testvm/checkpoints", json={"name": "newsnap"})
+    assert res.status_code == 200
+
+    res = client.post("/vms/testvm/checkpoints/newsnap/restore")
+    assert res.status_code == 200
+
+    res = client.delete("/vms/testvm/checkpoints/newsnap")
+    assert res.status_code == 200
+
+def test_api_guest_ops():
+    res = client.post("/vms/testvm/execute", json={"command": "whoami"})
+    assert res.status_code == 200
+    assert res.json()["output"] == "output"
+
+    res = client.post("/vms/testvm/copy-to-guest", json={
+        "guest_path": "/tmp/test.txt",
+        "file_content_b64": "SGVsbG8="
+    })
+    assert res.status_code == 200
+
+def test_api_devices():
+    res = client.post("/vms/testvm/disks", json={"disk_path": "/fake/disk"})
+    assert res.status_code == 200
+
+    res = client.request("DELETE", "/vms/testvm/disks", json={"disk_path": "/fake/disk"})
+    assert res.status_code == 200
+
+    res = client.post("/vms/testvm/network-adapters", json={"switch_name": "switch1"})
+    assert res.status_code == 200
+    assert res.json()["mac_address"] == "mac"
+
+    res = client.delete("/vms/testvm/network-adapters/mac")
+    assert res.status_code == 200
+

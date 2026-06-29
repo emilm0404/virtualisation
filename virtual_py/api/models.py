@@ -47,3 +47,29 @@ class CheckpointPayload(BaseModel):
 
 class VMMigratePayload(BaseModel):
     target_host: str
+
+# models for running guest operations.
+class GuestExecutePayload(BaseModel):
+    command: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+# models for copying files to guest.
+class GuestFileCopyPayload(BaseModel):
+    guest_path: str
+    host_path: Optional[str] = None
+    file_content_b64: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+# models for device hot-plugging.
+class DiskAttachPayload(BaseModel):
+    disk_path: str
+    controller_type: Optional[str] = None
+
+class DiskDetachPayload(BaseModel):
+    disk_path: str
+
+class AdapterAttachPayload(BaseModel):
+    switch_name: str
+

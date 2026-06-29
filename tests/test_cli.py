@@ -25,6 +25,14 @@ class DummyProvider:
         self.list_networks = AsyncMock(return_value=["net1", "net2"])
         self.get_vm_metrics = AsyncMock(return_value=VMMetrics(5.5, 256, 120))
         self.migrate_vm = AsyncMock(return_value=True)
+        self.clone_vm = AsyncMock(return_value=True)
+        self.export_vm = AsyncMock(return_value=True)
+        self.execute_command = AsyncMock(return_value="cmdoutput")
+        self.copy_file_to_guest = AsyncMock(return_value=True)
+        self.attach_disk = AsyncMock(return_value=True)
+        self.detach_disk = AsyncMock(return_value=True)
+        self.add_network_adapter = AsyncMock(return_value="00:11:22:33:44:55")
+        self.remove_network_adapter = AsyncMock(return_value=True)
 
 @pytest.mark.asyncio
 async def test_cli_list_normal():
@@ -129,3 +137,66 @@ async def test_cli_migrate():
         await run()
         provider.migrate_vm.assert_called_once_with("vm1", "10.0.0.99")
         mock_print.assert_any_call("vm 'vm1' migrated successfully.")
+
+@pytest.mark.asyncio
+async def test_cli_clone():
+    provider = DummyProvider()
+    test_args = ["cli.py", "clone", "vm1", "vm1-clone"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print") as mock_print:
+        await run()
+        provider.clone_vm.assert_called_once_with("vm1", "vm1-clone")
+
+@pytest.mark.asyncio
+async def test_cli_export():
+    provider = DummyProvider()
+    test_args = ["cli.py", "export", "vm1", "/tmp/export"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print") as mock_print:
+        await run()
+        provider.export_vm.assert_called_once_with("vm1", "/tmp/export")
+
+@pytest.mark.asyncio
+async def test_cli_execute():
+    provider = DummyProvider()
+    test_args = ["cli.py", "execute", "vm1", "ls -la", "--username", "root", "--password", "secret"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("sys.stdout.write") as mock_stdout:
+        await run()
+        provider.execute_command.assert_called_once_with("vm1", "ls -la", username="root", password="secret")
+        mock_stdout.assert_any_call("cmdoutput")
+
+@pytest.mark.asyncio
+async def test_cli_copy():
+    provider = DummyProvider()
+    test_args = ["cli.py", "copy", "vm1", "/local/path", "/guest/path"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print") as mock_print:
+        await run()
+        provider.copy_file_to_guest.assert_called_once_with("vm1", "/local/path", "/guest/path", username=None, password=None)
+
+@pytest.mark.asyncio
+async def test_cli_device():
+    provider = DummyProvider()
+    
+    # attach disk
+    test_args = ["cli.py", "device", "attach-disk", "vm1", "--disk-path", "/fake/disk"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print"):
+        await run()
+        provider.attach_disk.assert_called_once_with("vm1", "/fake/disk", controller_type=None)
+
+    # attach nic
+    test_args2 = ["cli.py", "device", "attach-nic", "vm1", "--switch-name", "switch1"]
+    with patch("sys.argv", test_args2), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print") as mock_print:
+        await run()
+        provider.add_network_adapter.assert_called_once_with("vm1", "switch1")
+        mock_print.assert_any_call("nic attached successfully. mac address: 00:11:22:33:44:55")
+

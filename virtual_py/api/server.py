@@ -1,9 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends
 from typing import List
+import base64
+import os
+import tempfile
 from virtual_py.api.models import (
     VMCreatePayload, VMScalePayload, VMConfigPayload,
     NetworkCreatePayload, VMInfoResponse, VMMetricsResponse,
-    HostMetricsResponse, CheckpointPayload, VMMigratePayload
+    HostMetricsResponse, CheckpointPayload, VMMigratePayload,
+    GuestExecutePayload, GuestFileCopyPayload, DiskAttachPayload,
+    DiskDetachPayload, AdapterAttachPayload
 )
 from virtual_py import get_provider
 from virtual_py.core.interfaces import VMProvider
@@ -218,3 +223,108 @@ async def clone_vm(name: str, payload: dict, provider: VMProvider = Depends(get_
         raise HTTPException(status_code=500, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# checkpoint routes.
+@app.get("/vms/{name}/checkpoints", response_model=List[str])
+async def list_checkpoints(name: str, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        return await provider.list_checkpoints(name)
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vms/{name}/checkpoints")
+async def create_checkpoint(name: str, payload: CheckpointPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.create_checkpoint(name, payload.name)
+        return {"message": f"Checkpoint '{payload.name}' created for VM '{name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vms/{name}/checkpoints/{checkpoint_name}/restore")
+async def restore_checkpoint(name: str, checkpoint_name: str, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.restore_checkpoint(name, checkpoint_name)
+        return {"message": f"VM '{name}' restored to checkpoint '{checkpoint_name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/vms/{name}/checkpoints/{checkpoint_name}")
+async def delete_checkpoint(name: str, checkpoint_name: str, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.delete_checkpoint(name, checkpoint_name)
+        return {"message": f"Checkpoint '{checkpoint_name}' deleted for VM '{name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# guest execution and file operations.
+@app.post("/vms/{name}/execute")
+async def execute_command(name: str, payload: GuestExecutePayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        result = await provider.execute_command(
+            name, payload.command,
+            username=payload.username, password=payload.password
+        )
+        return {"output": result}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vms/{name}/copy-to-guest")
+async def copy_to_guest(name: str, payload: GuestFileCopyPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        if payload.file_content_b64:
+            content = base64.b64decode(payload.file_content_b64)
+            # save content to a temporary file on the host machine.
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp.write(content)
+                temp_path = tmp.name
+            try:
+                await provider.copy_file_to_guest(
+                    name, temp_path, payload.guest_path,
+                    username=payload.username, password=payload.password
+                )
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+        elif payload.host_path:
+            await provider.copy_file_to_guest(
+                name, payload.host_path, payload.guest_path,
+                username=payload.username, password=payload.password
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Must provide either host_path or file_content_b64")
+        return {"message": f"Successfully copied file to guest path '{payload.guest_path}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# device management and hot-plugging.
+@app.post("/vms/{name}/disks")
+async def attach_disk(name: str, payload: DiskAttachPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.attach_disk(name, payload.disk_path, controller_type=payload.controller_type)
+        return {"message": f"Successfully attached disk '{payload.disk_path}' to VM '{name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/vms/{name}/disks")
+async def detach_disk(name: str, payload: DiskDetachPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.detach_disk(name, payload.disk_path)
+        return {"message": f"Successfully detached disk '{payload.disk_path}' from VM '{name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vms/{name}/network-adapters")
+async def add_network_adapter(name: str, payload: AdapterAttachPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        mac = await provider.add_network_adapter(name, payload.switch_name)
+        return {"mac_address": mac}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/vms/{name}/network-adapters/{mac}")
+async def remove_network_adapter(name: str, mac: str, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.remove_network_adapter(name, mac)
+        return {"message": f"Successfully removed adapter with MAC '{mac}' from VM '{name}'"}
+    except VMException as e:
+        raise HTTPException(status_code=500, detail=str(e))
