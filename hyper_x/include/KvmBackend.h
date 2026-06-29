@@ -9,7 +9,7 @@ public:
     bool initialize() override;
     bool setup_vm() override;
     bool map_guest_memory(uint64_t gpa, size_t size, void* host_addr) override;
-    bool setup_vcpu(uint64_t rip) override;
+    bool setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) override;
     bool run_loop() override;
 
 private:

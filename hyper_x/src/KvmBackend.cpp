@@ -37,6 +37,12 @@ bool KvmBackend::setup_vm() {
         std::cerr << "kvm: failed to create VM." << std::endl;
         return false;
     }
+
+    // create in-kernel interrupt controller (APIC)
+    if (ioctl(vm_fd_, KVM_CREATE_IRQCHIP, 0) < 0) {
+        std::cerr << "kvm: failed to create in-kernel IRQCHIP." << std::endl;
+    }
+
     return true;
 }
 
@@ -56,7 +62,7 @@ bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
     return true;
 }
 
-bool KvmBackend::setup_vcpu(uint64_t rip) {
+bool KvmBackend::setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) {
     vcpu_fd_ = ioctl(vm_fd_, KVM_CREATE_VCPU, 0);
     if (vcpu_fd_ < 0) {
         std::cerr << "kvm: failed to create VCPU." << std::endl;
@@ -77,13 +83,45 @@ bool KvmBackend::setup_vcpu(uint64_t rip) {
 
     struct kvm_sregs sregs;
     if (ioctl(vcpu_fd_, KVM_GET_SREGS, &sregs) < 0) return false;
+
+    sregs.gdt.base = 0x500;
+    sregs.gdt.limit = 23;
+
+    sregs.cs.selector = 0x8;
     sregs.cs.base = 0;
-    sregs.cs.selector = 0;
+    sregs.cs.limit = 0xFFFFFFFF;
+    sregs.cs.g = 1;
+    sregs.cs.db = 1;
+    sregs.cs.present = 1;
+    sregs.cs.s = 1;
+    sregs.cs.type = 11;
+
+    struct kvm_segment ds_seg = {};
+    ds_seg.selector = 0x10;
+    ds_seg.base = 0;
+    ds_seg.limit = 0xFFFFFFFF;
+    ds_seg.g = 1;
+    ds_seg.db = 1;
+    ds_seg.present = 1;
+    ds_seg.s = 1;
+    ds_seg.type = 3;
+
+    sregs.ds = ds_seg;
+    sregs.es = ds_seg;
+    sregs.ss = ds_seg;
+    sregs.fs = ds_seg;
+    sregs.gs = ds_seg;
+
+    sregs.cr0 = 0x1;
+
     if (ioctl(vcpu_fd_, KVM_SET_SREGS, &sregs) < 0) return false;
 
     struct kvm_regs regs = {};
     regs.rip = rip;
+    regs.rsi = boot_params_gpa;
+    regs.rsp = 0x8000;
     regs.rflags = 2;
+
     if (ioctl(vcpu_fd_, KVM_SET_REGS, &regs) < 0) return false;
 
     return true;
@@ -101,18 +139,25 @@ bool KvmBackend::run_loop() {
 
         switch (run->exit_reason) {
             case KVM_EXIT_IO: {
-                if (run->io.port == 0x80 && run->io.direction == KVM_EXIT_IO_OUT) {
+                if (run->io.port == 0x3F8 && run->io.direction == KVM_EXIT_IO_OUT) {
+                    char* data = (char*)run + run->io.data_offset;
+                    for (int i = 0; i < run->io.count; ++i) {
+                        std::cout << *data;
+                        data += run->io.size;
+                    }
+                    std::cout.flush();
+                } else if (run->io.port == 0x80 && run->io.direction == KVM_EXIT_IO_OUT) {
                     char* data = (char*)run + run->io.data_offset;
                     std::cout << "[guest output] port 0x80: " << std::hex << (int)*data << std::endl;
                 }
                 break;
             }
             case KVM_EXIT_HLT:
-                std::cout << "[guest halt] HLT execution exit." << std::endl;
+                std::cout << "\n[guest halt] HLT execution exit." << std::endl;
                 running = false;
                 break;
             default:
-                std::cout << "kvm: unhandled exit reason: " << run->exit_reason << std::endl;
+                std::cout << "\nkvm: unhandled exit reason: " << run->exit_reason << std::endl;
                 running = false;
                 break;
         }

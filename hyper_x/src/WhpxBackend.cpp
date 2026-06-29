@@ -38,6 +38,15 @@ bool WhpxBackend::setup_vm() {
         return false;
     }
 
+    // enable local apic emulation mode
+    WHV_PARTITION_PROPERTY prop_apic;
+    ZeroMemory(&prop_apic, sizeof(prop_apic));
+    prop_apic.LocalApicEmulationMode = WHvX64LocalApicEmulationModeXApic;
+    hr = WHvSetPartitionProperty(partition_, WHvPartitionPropertyCodeLocalApicEmulationMode, &prop_apic, sizeof(prop_apic));
+    if (FAILED(hr)) {
+        std::cerr << "whpx: failed to enable Local APIC emulation. hr = " << std::hex << hr << std::endl;
+    }
+
     hr = WHvSetupPartition(partition_);
     if (FAILED(hr)) {
         std::cerr << "whpx: failed to setup partition. hr = " << std::hex << hr << std::endl;
@@ -59,26 +68,54 @@ bool WhpxBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
     return true;
 }
 
-bool WhpxBackend::setup_vcpu(uint64_t rip) {
+bool WhpxBackend::setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) {
     HRESULT hr = WHvCreateVirtualProcessor(partition_, 0, 0);
     if (FAILED(hr)) {
         std::cerr << "whpx: failed to create virtual processor. hr = " << std::hex << hr << std::endl;
         return false;
     }
 
+    // setup 32-bit protected mode registers
     WHV_REGISTER_NAME reg_names[] = {
         WHvX64RegisterRip,
-        WHvX64RegisterCs
+        WHvX64RegisterRsi,
+        WHvX64RegisterRsp,
+        WHvX64RegisterGdtr,
+        WHvX64RegisterCs,
+        WHvX64RegisterDs,
+        WHvX64RegisterEs,
+        WHvX64RegisterSs,
+        WHvX64RegisterFs,
+        WHvX64RegisterGs,
+        WHvX64RegisterCr0
     };
-    WHV_REGISTER_VALUE reg_values[2];
-    ZeroMemory(&reg_values, sizeof(reg_values));
-    reg_values[0].Reg64 = rip;
-    reg_values[1].Segment.Selector = 0;
-    reg_values[1].Segment.Base = 0;
-    reg_values[1].Segment.Limit = 0xFFFF;
-    reg_values[1].Segment.Attributes = 0x9B; // exec/read code segment
 
-    hr = WHvSetVirtualProcessorRegisters(partition_, 0, reg_names, 2, reg_values);
+    const int reg_count = sizeof(reg_names) / sizeof(reg_names[0]);
+    WHV_REGISTER_VALUE reg_values[reg_count];
+    ZeroMemory(reg_values, sizeof(reg_values));
+
+    reg_values[0].Reg64 = rip;
+    reg_values[1].Reg64 = boot_params_gpa;
+    reg_values[2].Reg64 = 0x8000;
+
+    reg_values[3].Table.Base = 0x500;
+    reg_values[3].Table.Limit = 23;
+
+    reg_values[4].Segment.Selector = 0x8;
+    reg_values[4].Segment.Base = 0;
+    reg_values[4].Segment.Limit = 0xFFFFFFFF;
+    reg_values[4].Segment.Attributes = 0xC9B;
+
+    for (int i = 5; i <= 9; ++i) {
+        reg_values[i].Segment.Selector = 0x10;
+        reg_values[i].Segment.Base = 0;
+        reg_values[i].Segment.Limit = 0xFFFFFFFF;
+        reg_values[i].Segment.Attributes = 0xC93;
+    }
+
+    reg_values[10].Reg64 = 0x1;
+
+    hr = WHvSetVirtualProcessorRegisters(partition_, 0, reg_names, reg_count, reg_values);
     if (FAILED(hr)) {
         std::cerr << "whpx: failed to set register values. hr = " << std::hex << hr << std::endl;
         return false;
@@ -101,11 +138,13 @@ bool WhpxBackend::run_loop() {
         switch (exit_context.ExitReason) {
             case WHvRunVpExitReasonX64IoPortAccess: {
                 auto& io = exit_context.IoPortAccess;
-                if (io.Port == 0x80 && io.AccessInfo.IsWrite) {
+                if (io.Port == 0x3F8 && io.AccessInfo.IsWrite) {
+                    std::cout << (char)io.Rax;
+                    std::cout.flush();
+                } else if (io.Port == 0x80 && io.AccessInfo.IsWrite) {
                     std::cout << "[guest output] port 0x80: " << std::hex << (int)io.Rax << std::endl;
                 }
                 
-                // advance rip over out instruction
                 WHV_REGISTER_NAME rip_name = WHvX64RegisterRip;
                 WHV_REGISTER_VALUE rip_val;
                 WHvGetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);
@@ -114,11 +153,11 @@ bool WhpxBackend::run_loop() {
                 break;
             }
             case WHvRunVpExitReasonX64Halt:
-                std::cout << "[guest halt] HLT execution exit." << std::endl;
+                std::cout << "\n[guest halt] HLT execution exit." << std::endl;
                 running = false;
                 break;
             default:
-                std::cout << "whpx: unhandled exit reason: " << exit_context.ExitReason << std::endl;
+                std::cout << "\nwhpx: unhandled exit reason: " << exit_context.ExitReason << std::endl;
                 running = false;
                 break;
         }
