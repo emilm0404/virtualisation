@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from typing import List
 import base64
@@ -430,5 +430,21 @@ async def attach_gpu_route(name: str, payload: GPUAttachPayload, provider: VMPro
 async def list_system_gpus(provider: VMProvider = Depends(get_vm_provider)):
     try:
         return await provider.detect_host_gpus()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vms/{name}/restore")
+async def restore_vm_endpoint(name: str, file: UploadFile = File(...), provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        fd, path = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(fd)
+        try:
+            with open(path, "wb") as f:
+                f.write(await file.read())
+            await provider.restore_vm(name, path)
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+        return {"message": f"Successfully restored VM '{name}' from backup."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

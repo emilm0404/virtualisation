@@ -35,6 +35,7 @@ class DummyProvider:
         self.remove_network_adapter = AsyncMock(return_value=True)
         self.attach_gpu = AsyncMock(return_value=True)
         self.detect_host_gpus = AsyncMock(return_value=[{"gpu": "Mock GPU", "vendor_id": "0x0000", "device_id": "0x0000", "vram_mb": "4096", "pci_address": "0000:01:00.0"}])
+        self.restore_vm = AsyncMock(return_value=True)
 
 @pytest.mark.asyncio
 async def test_cli_list_normal():
@@ -251,5 +252,15 @@ async def test_cli_system_gpus():
         await run()
         provider.detect_host_gpus.assert_called_once()
         mock_print.assert_any_call("GPU [0]: Mock GPU | Vendor: 0x0000 | Device: 0x0000 | VRAM: 4096MB | PCI Address: 0000:01:00.0")
+
+@pytest.mark.asyncio
+async def test_cli_restore():
+    provider = DummyProvider()
+    test_args = ["cli.py", "restore", "vm1", "/tmp/backup.tar.gz"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("builtins.print"):
+        await run()
+        provider.restore_vm.assert_called_once_with("vm1", "/tmp/backup.tar.gz")
 
 

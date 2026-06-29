@@ -800,3 +800,60 @@ class KVMProvider(VMProvider):
             if os.path.exists(path):
                 os.remove(path)
         return True
+
+    async def restore_vm(self, vm_name: str, backup_path: str) -> bool:
+        validate_vm_name(vm_name)
+        validate_path(backup_path)
+        
+        import tarfile
+        import tempfile
+        import shutil
+        import uuid
+        import sys
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with tarfile.open(backup_path, "r:gz") as tar:
+                tar.extractall(path=tmpdir)
+                
+            export_dir = os.path.join(tmpdir, "export")
+            if not os.path.exists(export_dir):
+                raise HypervisorExecutionError("restore", -1, "", "invalid backup format")
+                
+            xml_files = [f for f in os.listdir(export_dir) if f.endswith(".xml")]
+            if not xml_files:
+                raise HypervisorExecutionError("restore", -1, "", "no VM metadata xml found in backup")
+                
+            old_xml_path = os.path.join(export_dir, xml_files[0])
+            tree = ET.parse(old_xml_path)
+            root = tree.getroot()
+            
+            name_node = root.find("name")
+            if name_node is not None:
+                name_node.text = vm_name
+                
+            uuid_node = root.find("uuid")
+            if uuid_node is not None:
+                uuid_node.text = str(uuid.uuid4())
+                
+            target_dir = "/var/lib/libvirt/images"
+            if sys.platform == "win32":
+                target_dir = "C:\\VMs"
+            os.makedirs(target_dir, exist_ok=True)
+            
+            for disk_node in root.findall(".//devices/disk/source"):
+                old_file = disk_node.get("file")
+                if old_file:
+                    disk_filename = os.path.basename(old_file)
+                    new_disk_filename = f"{vm_name}-{disk_filename}"
+                    new_file_path = os.path.join(target_dir, new_disk_filename)
+                    
+                    extracted_disk = os.path.join(export_dir, disk_filename)
+                    if os.path.exists(extracted_disk):
+                        shutil.copy2(extracted_disk, new_file_path)
+                    disk_node.set("file", new_file_path)
+                    
+            new_xml_path = os.path.join(export_dir, f"{vm_name}-restored.xml")
+            tree.write(new_xml_path, encoding="utf-8", xml_declaration=True)
+            
+            await self._run_command([self.virsh_path, "define", new_xml_path])
+        return True

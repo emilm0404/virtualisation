@@ -201,3 +201,10 @@ class RemoteProvider(VMProvider):
 
     async def detect_host_gpus(self) -> List[dict]:
         return await self._request("GET", "/system/gpus")
+
+    async def restore_vm(self, vm_name: str, backup_path: str) -> bool:
+        import os
+        with open(backup_path, "rb") as f:
+            files = {"file": (os.path.basename(backup_path), f, "application/gzip")}
+            await self._request("POST", f"/vms/{vm_name}/restore", files=files)
+        return True

@@ -321,6 +321,16 @@ async def handle_backup(args, provider):
         print(f"error during backup: {e}", file=sys.stderr)
         sys.exit(1)
 
+# restores vm from a backup archive.
+async def handle_restore(args, provider):
+    try:
+        print(f"restoring VM '{args.name}' from backup '{args.backup_path}'...")
+        await provider.restore_vm(args.name, args.backup_path)
+        print("VM restored successfully.")
+    except Exception as e:
+        print(f"error during restore: {e}", file=sys.stderr)
+        sys.exit(1)
+
 # starts websocket-to-tcp console forwarding tunnel.
 async def handle_console(args, provider):
     import websockets
@@ -680,6 +690,11 @@ async def run():
     console_p.add_argument("name", help="name of the vm")
     console_p.add_argument("--port", type=int, default=5901, help="local VNC listening port")
 
+    # restore
+    restore_p = subparsers.add_parser("restore", help="restore vm from compressed backup")
+    restore_p.add_argument("name", help="name of the vm")
+    restore_p.add_argument("backup_path", help="path to backup .tar.gz archive")
+
     args = parser.parse_args()
     
     if args.command == "daemon":
@@ -764,6 +779,8 @@ async def run():
         await handle_console(args, provider)
     elif args.command == "system":
         await handle_system(args, provider)
+    elif args.command == "restore":
+        await handle_restore(args, provider)
 
 def main():
     asyncio.run(run())

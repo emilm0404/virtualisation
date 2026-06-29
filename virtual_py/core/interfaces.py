@@ -224,3 +224,7 @@ class VMProvider(abc.ABC):
             return gpus
         except Exception:
             return [{"gpu": "Mock GPU", "vendor_id": "0x0000", "device_id": "0x0000", "vram_mb": "4096", "pci_address": "0000:01:00.0"}]
+
+    @abc.abstractmethod
+    async def restore_vm(self, vm_name: str, backup_path: str) -> bool:
+        pass

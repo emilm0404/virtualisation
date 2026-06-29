@@ -892,6 +892,9 @@ class HyperVProvider(VMProvider):
         }}
         try {{
             Export-VM -Name '{vm_name}' -Path '{esc_path}'
+            $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            takeown /F '{esc_path}' /R /A /D Y | Out-Null
+            icacls '{esc_path}' /grant "${{user}}:F" /T | Out-Null
         }} finally {{
             if ($gpus) {{
                 Add-VMGpuPartitionAdapter -VMName '{vm_name}'
@@ -948,4 +951,35 @@ class HyperVProvider(VMProvider):
             Add-VMPciDeviceAdapter -VMName '{vm_name}' -LocationPath '{pci_addr}'
             """
         await self._run_powershell(script)
+        return True
+
+    async def restore_vm(self, vm_name: str, backup_path: str) -> bool:
+        validate_vm_name(vm_name)
+        validate_path(backup_path)
+        
+        import tarfile
+        import tempfile
+        import shutil
+        
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with tarfile.open(backup_path, "r:gz") as tar:
+                tar.extractall(path=tmpdir)
+                
+            export_dir = os.path.join(tmpdir, "export")
+            esc_dir = export_dir.replace("'", "''")
+            
+            script = f"""
+            $ErrorActionPreference = 'Stop'
+            $vmcx = Get-ChildItem -Path '{esc_dir}' -Recurse -Filter '*.vmcx' | Select-Object -First 1
+            if (-not $vmcx) {{
+                throw "no configuration (.vmcx) found in backup"
+            }}
+            $imported = Import-VM -Path $vmcx.FullName -Copy -GenerateNewId
+            Rename-VM -VM $imported -NewName '{vm_name}'
+            """
+            await self._run_powershell(script)
+        finally:
+            if os.path.exists(tmpdir):
+                shutil.rmtree(tmpdir)
         return True
