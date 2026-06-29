@@ -917,6 +917,7 @@ class HyperVProvider(VMProvider):
         if mode == "shared":
             script = f"""
             $ErrorActionPreference = 'Stop'
+            Set-VM -Name '{vm_name}' -CheckpointType Disabled
             Add-VMGpuPartitionAdapter -VMName '{vm_name}' -ErrorAction SilentlyContinue
             Set-VMGpuPartitionAdapter -VMName '{vm_name}' -MinPartitionVRAM 80000000 -MaxPartitionVRAM 100000000 -OptimalPartitionVRAM 100000000 -MinPartitionEncode 80000000 -MaxPartitionEncode 100000000 -OptimalPartitionEncode 100000000 -MinPartitionDecode 80000000 -MaxPartitionDecode 100000000 -OptimalPartitionDecode 100000000 -MinPartitionCompute 80000000 -MaxPartitionCompute 100000000 -OptimalPartitionCompute 100000000
             """
@@ -927,10 +928,11 @@ class HyperVProvider(VMProvider):
                 if gpus:
                     pci_addr = gpus[0].get("pci_address")
             if not pci_addr:
-                pci_addr = "PCIROOT(0)#PCI(0200)" # fallback location path
+                pci_addr = "PCIROOT(0)#PCI(0200)"
                 
             script = f"""
             $ErrorActionPreference = 'Stop'
+            Set-VM -Name '{vm_name}' -CheckpointType Disabled
             Dismount-VMHostAssignableDevice -LocationPath '{pci_addr}' -Force -ErrorAction SilentlyContinue
             Add-VMPciDeviceAdapter -VMName '{vm_name}' -LocationPath '{pci_addr}'
             """
