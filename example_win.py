@@ -14,12 +14,20 @@ async def main():
     if not os.path.exists(vm_dir):
         os.makedirs(vm_dir, exist_ok=True)
         
-    # windows evaluation ISO is ~5GB. we download only if not already present.
+    # windows evaluation ISO is ~5GB. check if file exists and is not a small redirect HTML.
+    if os.path.exists(iso_path) and os.path.getsize(iso_path) < 100000000:
+        print("detected corrupted/incomplete ISO file. removing it...")
+        os.remove(iso_path)
+
     if not os.path.exists(iso_path):
-        print("windows 10 evaluation ISO is ~5GB. starting download...")
-        iso_url = "https://go.microsoft.com/fwlink/p/?LinkID=2195165"
-        urllib.request.urlretrieve(iso_url, iso_path)
-        print("download completed.")
+        print("windows 10 evaluation ISO is ~5GB.")
+        print("due to microsoft's dynamic download link security, we suggest downloading the ISO manually from:")
+        print("https://www.microsoft.com/en-us/evalcenter/download-windows-10-enterprise")
+        print(f"once downloaded, save it to: {iso_path}")
+        print("waiting for manual file placement...")
+        while not os.path.exists(iso_path) or os.path.getsize(iso_path) < 100000000:
+            await asyncio.sleep(2)
+        print("valid ISO file detected. resuming setup...")
     else:
         print("windows 10 evaluation ISO already present.")
 
