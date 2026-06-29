@@ -140,10 +140,11 @@ bool WhpxBackend::run_loop() {
         switch (exit_context.ExitReason) {
             case WHvRunVpExitReasonX64IoPortAccess: {
                 auto& io = exit_context.IoPortAccess;
-                if (io.Port == 0x3F8 && io.AccessInfo.IsWrite) {
+                // FIX 1: WHPX uses PortNumber, not Port
+                if (io.PortNumber == 0x3F8 && io.AccessInfo.IsWrite) {
                     std::cout << (char)io.Rax;
                     std::cout.flush();
-                } else if (io.Port == 0x80 && io.AccessInfo.IsWrite) {
+                } else if (io.PortNumber == 0x80 && io.AccessInfo.IsWrite) {
                     std::cout << "[guest output] port 0x80: " << std::hex << (int)io.Rax << std::endl;
                 }
                 
@@ -156,7 +157,8 @@ bool WhpxBackend::run_loop() {
             }
             case WHvRunVpExitReasonMemoryAccess: {
                 auto& mem = exit_context.MemoryAccess;
-                if (mem.Gpa == 0x3FFFF000 && mem.AccessInfo.IsWrite) {
+                // FIX 2: WHPX memory access uses AccessType (0=Read, 1=Write, 2=Execute)
+                if (mem.Gpa == 0x3FFFF000 && mem.AccessInfo.AccessType == 1) {
                     void* host_vram = mapped_regions_[0x40000000];
                     if (host_vram) {
                         XGpuCommand* cmd = (XGpuCommand*)host_vram;
