@@ -886,7 +886,18 @@ class HyperVProvider(VMProvider):
         if (-not (Test-Path '{esc_path}')) {{
             New-Item -ItemType Directory -Path '{esc_path}' -Force | Out-Null
         }}
-        Export-VM -Name '{vm_name}' -Path '{esc_path}'
+        $gpus = Get-VMGpuPartitionAdapter -VMName '{vm_name}' -ErrorAction SilentlyContinue
+        if ($gpus) {{
+            Remove-VMGpuPartitionAdapter -VMName '{vm_name}'
+        }}
+        try {{
+            Export-VM -Name '{vm_name}' -Path '{esc_path}'
+        }} finally {{
+            if ($gpus) {{
+                Add-VMGpuPartitionAdapter -VMName '{vm_name}'
+                Set-VMGpuPartitionAdapter -VMName '{vm_name}' -MinPartitionVRAM 80000000 -MaxPartitionVRAM 100000000 -OptimalPartitionVRAM 100000000 -MinPartitionEncode 80000000 -MaxPartitionEncode 100000000 -OptimalPartitionEncode 100000000 -MinPartitionDecode 80000000 -MaxPartitionDecode 100000000 -OptimalPartitionDecode 100000000 -MinPartitionCompute 80000000 -MaxPartitionCompute 100000000 -OptimalPartitionCompute 100000000
+            }}
+        }}
         """
         await self._run_powershell(script)
         return True
