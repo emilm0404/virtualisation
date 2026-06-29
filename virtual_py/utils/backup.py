@@ -30,6 +30,9 @@ async def create_backup(vm_name: str, output_path: str):
                         # copy disk file to export directory.
                         shutil.copy2(file_path, vm_export_dir)
         
+        import asyncio
+        await asyncio.sleep(3)
+
         # pack the export folder into a tarball.
         with tarfile.open(output_path, "w:gz") as tar:
             tar.add(vm_export_dir, arcname=os.path.basename(vm_export_dir))
