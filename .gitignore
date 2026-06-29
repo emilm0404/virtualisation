@@ -1,0 +1,31 @@
+# standard python files to keep out of version control.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# pytest config and local cache.
+.pytest_cache/
+.pytest/
+
+# package builds.
+dist/
+build/
+*.egg-info/
+
+# python virtual environments.
+.venv/
+venv/
+
+# hypervisor storage files. prevent committing virtual hard drives or iso files.
+*.vhdx
+*.vhd
+*.qcow2
+*.img
+*.iso
+
+# coverage files
+.coverage
+
+# website files and builds
+website/
