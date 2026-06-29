@@ -3,7 +3,12 @@ project(hyper_x CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(hyper_x main.cpp)
+add_executable(hyper_x 
+    src/main.cpp 
+    src/WhpxBackend.cpp
+    src/KvmBackend.cpp
+)
 
-# link against windows hypervisor platform library
-target_link_libraries(hyper_x PRIVATE WinHvPlatform)
+if(WIN32)
+    target_link_libraries(hyper_x PRIVATE WinHvPlatform)
+endif()
