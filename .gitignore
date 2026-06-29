@@ -29,3 +29,6 @@ venv/
 
 # website files and builds
 website/
+
+# hidden scrapers
+scrape_win_iso.py
