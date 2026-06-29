@@ -947,6 +947,9 @@ class HyperVProvider(VMProvider):
             script = f"""
             $ErrorActionPreference = 'Stop'
             Set-VM -Name '{vm_name}' -CheckpointType Disabled
+            Set-VM -Name '{vm_name}' -GuestControlledCacheTypes $True
+            Set-VM -Name '{vm_name}' -LowMemoryMappedIoSpace 3Gb
+            Set-VM -Name '{vm_name}' -HighMemoryMappedIoSpace 33000Mb
             Dismount-VMHostAssignableDevice -LocationPath '{pci_addr}' -Force -ErrorAction SilentlyContinue
             Add-VMPciDeviceAdapter -VMName '{vm_name}' -LocationPath '{pci_addr}'
             """
