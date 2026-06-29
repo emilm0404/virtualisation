@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyper X - GPU Virtualization Visualizer</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a0b10;
+            --card-bg: rgba(18, 20, 30, 0.7);
+            --primary: #9d4edd;
+            --primary-light: #c77dff;
+            --accent-green: #00f5d4;
+            --accent-blue: #00bbf9;
+            --accent-amber: #fee440;
+            --text-main: #f8f9fa;
+            --text-muted: #adb5bd;
+            --border: rgba(255, 255, 255, 0.08);
+            --neon-shadow: 0 0 15px rgba(157, 78, 221, 0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            overflow-x: hidden;
+            background-image: radial-gradient(circle at 10% 20%, rgba(90, 24, 154, 0.15) 0%, transparent 40%),
+                              radial-gradient(circle at 90% 80%, rgba(0, 245, 212, 0.1) 0%, transparent 40%);
+            background-attachment: fixed;
+        }
+
+        header {
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(10, 11, 16, 0.8);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--primary), var(--accent-blue));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            box-shadow: var(--neon-shadow);
+        }
+
+        .logo-text {
+            font-size: 24px;
+            font-weight: 800;
+            background: linear-gradient(to right, #fff, var(--primary-light));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 1px;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 245, 212, 0.1);
+            border: 1px solid var(--accent-green);
+            color: var(--accent-green);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 0 10px rgba(0, 245, 212, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+
+        .main-container {
+            max-width: 1400px;
+            margin: 40px auto;
+            padding: 0 20px;
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 30px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transition: transform 0.3s ease, border-color 0.3s ease;
+        }
+
+        .panel-card:hover {
+            border-color: rgba(157, 78, 221, 0.3);
+        }
+
+        .panel-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .panel-title::before {
+            content: '';
+            width: 4px;
+            height: 16px;
+            background: var(--primary);
+            border-radius: 2px;
+            display: inline-block;
+        }
+
+        /* memory visualization layout */
+        .vram-grid {
+            display: grid;
+            grid-template-columns: repeat(16, 1fr);
+            gap: 6px;
+            margin-bottom: 20px;
+        }
+
+        .vram-block {
+            aspect-ratio: 1;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            transition: all 0.2s ease;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .vram-block:hover {
+            transform: scale(1.15);
+            z-index: 10;
+        }
+
+        .vram-block.ring-buffer {
+            background: rgba(0, 187, 249, 0.25);
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 8px rgba(0, 187, 249, 0.2);
+        }
+
+        .vram-block.vertex-data {
+            background: rgba(157, 78, 221, 0.25);
+            border-color: var(--primary);
+            box-shadow: 0 0 8px rgba(157, 78, 221, 0.2);
+        }
+
+        .vram-block.active-fb {
+            background: rgba(0, 245, 212, 0.25);
+            border-color: var(--accent-green);
+            box-shadow: 0 0 8px rgba(0, 245, 212, 0.2);
+        }
+
+        .vram-legend {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: var(--text-muted);
+            justify-content: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        /* 3D Canvas visualizer */
+        .canvas-container {
+            width: 100%;
+            aspect-ratio: 1.33;
+            background: #000;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #gpu-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .canvas-overlay {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            color: var(--accent-green);
+            border: 1px solid rgba(0, 245, 212, 0.3);
+        }
+
+        /* registers visualizer */
+        .register-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .register-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .reg-name {
+            color: var(--primary-light);
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .reg-val {
+            color: #fff;
+            font-size: 14px;
+        }
+
+        /* Realtime Logs list */
+        .logs-container {
+            height: 250px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid var(--border);
+        }
+
+        .log-item {
+            margin-bottom: 8px;
+            line-height: 1.4;
+            border-left: 2px solid var(--primary);
+            padding-left: 8px;
+        }
+
+        .log-time {
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+
+        .log-tag {
+            color: var(--accent-blue);
+            font-weight: 600;
+            margin-right: 6px;
+        }
+
+        .log-msg {
+            color: var(--text-main);
+        }
+
+        .log-item.exit-log {
+            border-color: var(--accent-amber);
+        }
+
+        .log-item.exit-log .log-tag {
+            color: var(--accent-amber);
+        }
+
+        .log-item.gpu-log {
+            border-color: var(--accent-green);
+        }
+
+        .log-item.gpu-log .log-tag {
+            color: var(--accent-green);
+        }
+
+        /* custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo-container">
+            <div class="logo-icon">X</div>
+            <h1 class="logo-text">Hyper X Dashboard</h1>
+        </div>
+        <div class="status-badge" id="engine-status">
+            <div class="status-dot"></div>
+            VMM Active (WHPX / KVM)
+        </div>
+    </header>
+
+    <div class="main-container">
+        <!-- left column: control and visualization -->
+        <div style="display: flex; flex-direction: column; gap: 30px;">
+            <div class="panel-card">
+                <h2 class="panel-title">Zero-Copy VRAM Layout (256MB)</h2>
+                <div class="vram-grid" id="vram-blocks">
+                    <!-- Javascript will generate blocks -->
+                </div>
+                <div class="vram-legend">
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(0, 187, 249, 0.6); border: 1px solid var(--accent-blue);"></div>
+                        <span>Command Ring Buffer (4MB)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(157, 78, 221, 0.6); border: 1px solid var(--primary);"></div>
+                        <span>Vertex/Index Buffers</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: rgba(0, 245, 212, 0.6); border: 1px solid var(--accent-green);"></div>
+                        <span>Active Framebuffers</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <h2 class="panel-title">Virtual Processor Registers</h2>
+                <div class="register-grid" id="reg-grid">
+                    <div class="register-box"><span class="reg-name">RIP</span><span class="reg-val" id="reg-rip">0x00100000</span></div>
+                    <div class="register-box"><span class="reg-name">RSI</span><span class="reg-val" id="reg-rsi">0x00010000</span></div>
+                    <div class="register-box"><span class="reg-name">RSP</span><span class="reg-val" id="reg-rsp">0x00008000</span></div>
+                    <div class="register-box"><span class="reg-name">CR0</span><span class="reg-val" id="reg-cr0">0x00000001</span></div>
+                    <div class="register-box"><span class="reg-name">CS</span><span class="reg-val" id="reg-cs">0x0008</span></div>
+                    <div class="register-box"><span class="reg-name">DS</span><span class="reg-val" id="reg-ds">0x0010</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- right column: GPU Canvas and logs -->
+        <div style="display: flex; flex-direction: column; gap: 30px;">
+            <div class="panel-card">
+                <h2 class="panel-title">Host Renderer Canvas</h2>
+                <div class="canvas-container">
+                    <canvas id="gpu-canvas" width="800" height="600"></canvas>
+                    <div class="canvas-overlay" id="fps-counter">Host Vulkan Renderer | 60 FPS</div>
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <h2 class="panel-title">Hypervisor Doorbell & Exit Log</h2>
+                <div class="logs-container" id="logs-list">
+                    <!-- Logs will load in here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // generate VRAM blocks
+        const vramGrid = document.getElementById('vram-blocks');
+        for (let i = 0; i < 64; i++) {
+            const block = document.createElement('div');
+            block.className = 'vram-block';
+            if (i < 4) {
+                block.className += ' ring-buffer';
+            } else if (i >= 8 && i < 24) {
+                block.className += ' vertex-data';
+            } else if (i >= 32 && i < 48) {
+                block.className += ' active-fb';
+            }
+            vramGrid.appendChild(block);
+        }
+
+        // setup 3D rotating triangle canvas
+        const canvas = document.getElementById('gpu-canvas');
+        const ctx = canvas.getContext('2d');
+        let angle = 0;
+
+        function drawTriangle() {
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // save context and rotate
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.rotate(angle);
+
+            // draw a glowing triangle
+            ctx.beginPath();
+            ctx.moveTo(0, -120);
+            ctx.lineTo(130, 90);
+            ctx.lineTo(-130, 90);
+            ctx.closePath();
+
+            // color gradient representing Vulkan API submission
+            const gradient = ctx.createLinearGradient(-130, -120, 130, 90);
+            gradient.addColorStop(0, '#9d4edd');
+            gradient.addColorStop(0.5, '#00bbf9');
+            gradient.addColorStop(1, '#00f5d4');
+
+            ctx.fillStyle = gradient;
+            ctx.shadowBlur = 25;
+            ctx.shadowColor = '#9d4edd';
+            ctx.fill();
+
+            ctx.restore();
+            angle += 0.015;
+            requestAnimationFrame(drawTriangle);
+        }
+        drawTriangle();
+
+        // live simulated events feed
+        const logsList = document.getElementById('logs-list');
+        const logs = [
+            { tag: "VMM", msg: "Initialized WHPX backend successfully", exit: false },
+            { tag: "WHPX", msg: "Mapped GPA 0x00000000 - 0x08000000 (128MB RAM)", exit: false },
+            { tag: "WHPX", msg: "Mapped GPA 0x40000000 - 0x50000000 (256MB Shared VRAM)", exit: false },
+            { tag: "VMM", msg: "Direct Boot: loaded bzImage into guest RAM (entry 0x100000)", exit: false },
+            { tag: "EXIT", msg: "Port write to 0x3F8: [   0.000000] Linux version 6.1.0-21-amd64", exit: true },
+            { tag: "EXIT", msg: "Port write to 0x3F8: [   0.000000] Command line: console=ttyS0 quiet", exit: true },
+            { tag: "EXIT", msg: "Port write to 0x3F8: [   0.245100] Initializing local APIC timer...", exit: true },
+            { tag: "EXIT", msg: "Port write to 0x3F8: [   1.104230] Platform Device hyperx_drm registered successfully", exit: true },
+            { tag: "EXIT", msg: "Port write to 0x3F8: [   1.458900] hyperx_drm: mapped VRAM GPA at 0x40000000", exit: true },
+            { tag: "X-GPU", msg: "Doorbell write exit on 0x3FFFF000 (XGPU_CMD_INIT)", gpu: true },
+            { tag: "X-GPU", msg: "Host Vulkan Instance initialized on physical GPU: NVIDIA GeForce RTX", gpu: true },
+            { tag: "X-GPU", msg: "Doorbell write exit on 0x3FFFF000 (XGPU_CMD_ALLOC_MEM)", gpu: true },
+            { tag: "X-GPU", msg: "Allocated 100MB native VRAM mirror at offset 0x1000", gpu: true },
+            { tag: "X-GPU", msg: "Doorbell write exit on 0x3FFFF000 (XGPU_CMD_VK_SUBMIT)", gpu: true },
+            { tag: "X-GPU", msg: "Directly submitting raw command buffers to host GPU queue", gpu: true }
+        ];
+
+        let logIdx = 0;
+        function addNextLog() {
+            if (logIdx < logs.length) {
+                const log = logs[logIdx];
+                const item = document.createElement('div');
+                item.className = 'log-item';
+                if (log.exit) item.className += ' exit-log';
+                if (log.gpu) item.className += ' gpu-log';
+
+                const timeSpan = document.createElement('span');
+                timeSpan.className = 'log-time';
+                const now = new Date();
+                timeSpan.textContent = `[${now.toTimeString().split(' ')[0]}]`;
+
+                const tagSpan = document.createElement('span');
+                tagSpan.className = 'log-tag';
+                tagSpan.textContent = `[${log.tag}]`;
+
+                const msgSpan = document.createElement('span');
+                msgSpan.className = 'log-msg';
+                msgSpan.textContent = log.msg;
+
+                item.appendChild(timeSpan);
+                item.appendChild(tagSpan);
+                item.appendChild(msgSpan);
+                logsList.appendChild(item);
+                logsList.scrollTop = logsList.scrollHeight;
+
+                // dynamically update register visuals randomly to show vCPU running
+                document.getElementById('reg-rip').textContent = '0x00' + (0x100000 + Math.floor(Math.random() * 50000)).toString(16).toUpperCase();
+                document.getElementById('reg-rsp').textContent = '0x0000' + (0x7F00 + Math.floor(Math.random() * 256)).toString(16).toUpperCase();
+
+                logIdx++;
+            } else {
+                logIdx = 0; // loop simulation
+                logsList.innerHTML = '';
+            }
+            setTimeout(addNextLog, 1500 + Math.random() * 1500);
+        }
+        setTimeout(addNextLog, 1000);
+    </script>
+</body>
+</html>
