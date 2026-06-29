@@ -126,9 +126,71 @@ bool WhpxBackend::setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) {
     return true;
 }
 
+bool WhpxBackend::setup_vcpu_realmode() {
+    HRESULT hr = WHvCreateVirtualProcessor(partition_, 0, 0);
+    if (FAILED(hr)) {
+        std::cerr << "whpx: failed to create virtual processor. hr = " << std::hex << hr << std::endl;
+        return false;
+    }
+
+    // Initialize vCPU in 16-bit Real Mode for UEFI firmware boot.
+    // The x86 reset vector: CS.Base = 0xFFFF0000, RIP = 0xFFF0
+    // First instruction fetched from physical address CS.Base + RIP = 0xFFFFFFF0
+    WHV_REGISTER_NAME reg_names[] = {
+        WHvX64RegisterRip,
+        WHvX64RegisterRsp,
+        WHvX64RegisterRflags,
+        WHvX64RegisterCr0,
+        WHvX64RegisterCs,
+        WHvX64RegisterDs,
+        WHvX64RegisterEs,
+        WHvX64RegisterSs,
+        WHvX64RegisterFs,
+        WHvX64RegisterGs
+    };
+
+    const int reg_count = sizeof(reg_names) / sizeof(reg_names[0]);
+    WHV_REGISTER_VALUE reg_values[reg_count];
+    ZeroMemory(reg_values, sizeof(reg_values));
+
+    // RIP = 0xFFF0 (reset vector offset)
+    reg_values[0].Reg64 = 0xFFF0;
+    // RSP = 0 (no stack initially)
+    reg_values[1].Reg64 = 0;
+    // RFLAGS = 0x2 (reserved bit must be set)
+    reg_values[2].Reg64 = 0x2;
+    // CR0 = 0x60000010 (real mode: PE=0, ET=1, NW=1, CD=1)
+    reg_values[3].Reg64 = 0x60000010;
+
+    // CS: selector=0xF000, base=0xFFFF0000, limit=0xFFFF (64KB real mode segment)
+    reg_values[4].Segment.Selector = 0xF000;
+    reg_values[4].Segment.Base = 0xFFFF0000;
+    reg_values[4].Segment.Limit = 0xFFFF;
+    reg_values[4].Segment.Attributes = 0x9B; // present, readable, executable, accessed
+
+    // DS, ES, SS, FS, GS: selector=0, base=0, limit=0xFFFF
+    for (int i = 5; i <= 9; ++i) {
+        reg_values[i].Segment.Selector = 0x0000;
+        reg_values[i].Segment.Base = 0x00000000;
+        reg_values[i].Segment.Limit = 0xFFFF;
+        reg_values[i].Segment.Attributes = 0x93; // present, writable, accessed
+    }
+
+    hr = WHvSetVirtualProcessorRegisters(partition_, 0, reg_names, reg_count, reg_values);
+    if (FAILED(hr)) {
+        std::cerr << "whpx: failed to set real mode register values. hr = " << std::hex << hr << std::endl;
+        return false;
+    }
+
+    std::cout << "whpx: vCPU initialized in 16-bit Real Mode (CS:IP = F000:FFF0)" << std::endl;
+    return true;
+}
+
 bool WhpxBackend::run_loop() {
     std::cout << "whpx: running virtual processor..." << std::endl;
     bool running = true;
+    uint32_t pci_config_addr = 0; // PCI configuration address register state
+
     while (running) {
         WHV_RUN_VP_EXIT_CONTEXT exit_context;
         HRESULT hr = WHvRunVirtualProcessor(partition_, 0, &exit_context, sizeof(exit_context));
@@ -140,14 +202,92 @@ bool WhpxBackend::run_loop() {
         switch (exit_context.ExitReason) {
             case WHvRunVpExitReasonX64IoPortAccess: {
                 auto& io = exit_context.IoPortAccess;
-                // FIX 1: WHPX uses PortNumber, not Port
-                if (io.PortNumber == 0x3F8 && io.AccessInfo.IsWrite) {
+                uint16_t port = io.PortNumber;
+
+                // ---- Serial UART 0x3F8 (COM1 data) ----
+                if (port == 0x3F8 && io.AccessInfo.IsWrite) {
                     std::cout << (char)io.Rax;
                     std::cout.flush();
-                } else if (io.PortNumber == 0x80 && io.AccessInfo.IsWrite) {
-                    std::cout << "[guest output] port 0x80: " << std::hex << (int)io.Rax << std::endl;
                 }
-                
+                // ---- Serial LSR 0x3FD (Line Status Register) ----
+                // OVMF polls this to check if transmitter is ready.
+                // Return 0x60 = THR empty + transmitter idle
+                else if (port == 0x3FD && !io.AccessInfo.IsWrite) {
+                    // Write 0x60 back into RAX via register manipulation
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0x60;
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                // ---- Serial IIR 0x3FA (Interrupt Identification Register) ----
+                else if (port == 0x3FA && !io.AccessInfo.IsWrite) {
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0x01; // no interrupt pending
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                // ---- Serial MCR/LCR/DLx writes (0x3F9-0x3FC) ----
+                else if (port >= 0x3F9 && port <= 0x3FC && io.AccessInfo.IsWrite) {
+                    // Silently consume UART configuration writes
+                }
+                // ---- Serial MSR 0x3FE (Modem Status Register) ----
+                else if (port == 0x3FE && !io.AccessInfo.IsWrite) {
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0xB0; // CTS + DSR + DCD asserted
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                // ---- OVMF Debug Port 0x402 ----
+                else if (port == 0x402 && io.AccessInfo.IsWrite) {
+                    std::cout << (char)io.Rax;
+                    std::cout.flush();
+                }
+                // ---- POST Code Debug Port 0x80 ----
+                else if (port == 0x80 && io.AccessInfo.IsWrite) {
+                    // Silently consume POST codes (or log them)
+                }
+                // ---- CMOS/RTC 0x70 (address) / 0x71 (data) ----
+                else if (port == 0x70 && io.AccessInfo.IsWrite) {
+                    // Store the CMOS register index (lower 7 bits)
+                    // We just consume it; reads from 0x71 return 0
+                }
+                else if (port == 0x71 && !io.AccessInfo.IsWrite) {
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0x00; // return zeros for all CMOS registers
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                // ---- PCI Configuration 0xCF8 (address) ----
+                else if (port == 0xCF8 && io.AccessInfo.IsWrite) {
+                    pci_config_addr = (uint32_t)io.Rax;
+                }
+                else if (port == 0xCF8 && !io.AccessInfo.IsWrite) {
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = pci_config_addr;
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                // ---- PCI Configuration 0xCFC (data) ----
+                // Return 0xFFFFFFFF (no device present) for all PCI config reads
+                else if (port >= 0xCFC && port <= 0xCFF && !io.AccessInfo.IsWrite) {
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0xFFFFFFFF;
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+                else if (port >= 0xCFC && port <= 0xCFF && io.AccessInfo.IsWrite) {
+                    // Silently consume PCI config writes
+                }
+                // ---- DMA controller / PIC / PIT / misc legacy ports ----
+                else if (!io.AccessInfo.IsWrite) {
+                    // Default: return 0xFF for unhandled reads
+                    WHV_REGISTER_NAME rax_name = WHvX64RegisterRax;
+                    WHV_REGISTER_VALUE rax_val;
+                    rax_val.Reg64 = 0xFF;
+                    WHvSetVirtualProcessorRegisters(partition_, 0, &rax_name, 1, &rax_val);
+                }
+
+                // Advance RIP past the IO instruction
                 WHV_REGISTER_NAME rip_name = WHvX64RegisterRip;
                 WHV_REGISTER_VALUE rip_val;
                 WHvGetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);

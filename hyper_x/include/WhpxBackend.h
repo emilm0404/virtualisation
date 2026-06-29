@@ -16,6 +16,7 @@ public:
     bool setup_vm() override;
     bool map_guest_memory(uint64_t gpa, size_t size, void* host_addr, uint32_t slot = 0) override;
     bool setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) override;
+    bool setup_vcpu_realmode() override;
     bool run_loop() override;
 
 private:

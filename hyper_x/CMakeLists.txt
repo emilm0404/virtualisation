@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 add_executable(hyper_x 
     src/main.cpp 
     src/Loader.cpp
+    src/UefiLoader.cpp
     src/WhpxBackend.cpp
     src/KvmBackend.cpp
 )
