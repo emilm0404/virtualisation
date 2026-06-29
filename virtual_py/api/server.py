@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi.responses import FileResponse
 from typing import List
 import base64
 import os
@@ -13,8 +14,18 @@ from virtual_py.api.models import (
 from virtual_py import get_provider
 from virtual_py.core.interfaces import VMProvider
 from virtual_py.core.exceptions import VMException, VMNotFoundError
+from virtual_py.api.autoscaler import Autoscaler
 
 app = FastAPI(title="virtual-pyd", description="virtual-py Distributed Daemon REST API")
+autoscaler = Autoscaler(interval_seconds=10)
+
+@app.on_event("startup")
+async def startup_event():
+    await autoscaler.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await autoscaler.stop()
 
 # Dependency injection for the provider
 def get_vm_provider() -> VMProvider:
@@ -328,3 +339,81 @@ async def remove_network_adapter(name: str, mac: str, provider: VMProvider = Dep
         return {"message": f"Successfully removed adapter with MAC '{mac}' from VM '{name}'"}
     except VMException as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/vms/{name}/console-display")
+async def get_console_display_route(name: str, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        return await provider.get_console_display(name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def remove_temp_file(path: str):
+    if os.path.exists(path):
+        os.remove(path)
+
+@app.get("/vms/{name}/backup")
+async def backup_vm_route(name: str, background_tasks: BackgroundTasks, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        from virtual_py.utils.backup import create_backup
+        fd, path = tempfile.mkstemp(suffix=".tar.gz")
+        os.close(fd)
+        
+        await create_backup(name, path)
+        background_tasks.add_task(remove_temp_file, path)
+        return FileResponse(path, media_type="application/gzip", filename=f"{name}-backup.tar.gz")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/vms/{name}/console")
+async def console_websocket(websocket: WebSocket, name: str, provider: VMProvider = Depends(get_vm_provider)):
+    await websocket.accept()
+    try:
+        display_url = await provider.get_console_display(name)
+        host = "127.0.0.1"
+        port = 5900
+        if "127.0.0.1" in display_url or "localhost" in display_url:
+            if ":" in display_url:
+                try:
+                    port = int(display_url.split(":")[-1])
+                except ValueError:
+                    pass
+        
+        reader, writer = await asyncio.open_connection(host, port)
+    except Exception as e:
+        await websocket.close(code=1011, reason=f"Failed to connect to console port: {str(e)}")
+        return
+
+    async def ws_to_tcp():
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                writer.write(data)
+                await writer.drain()
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def tcp_to_ws():
+        try:
+            while True:
+                data = await reader.read(4096)
+                if not data:
+                    break
+                await websocket.send_bytes(data)
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+    import asyncio
+    t1 = asyncio.create_task(ws_to_tcp())
+    t2 = asyncio.create_task(tcp_to_ws())
+    await asyncio.gather(t1, t2, return_exceptions=True)

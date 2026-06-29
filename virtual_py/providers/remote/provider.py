@@ -190,3 +190,6 @@ class RemoteProvider(VMProvider):
     async def clone_vm(self, vm_name: str, clone_name: str) -> bool:
         await self._request("POST", f"/vms/{vm_name}/clone", json={"clone_name": clone_name})
         return True
+
+    async def get_console_display(self, vm_name: str) -> str:
+        return await self._request("GET", f"/vms/{vm_name}/console-display")

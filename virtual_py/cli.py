@@ -268,6 +268,90 @@ async def handle_device(args, provider):
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
+# runs the declarative IaC engine apply/destroy.
+async def handle_iac(args):
+    try:
+        from virtual_py.iac import apply_yaml, destroy_yaml
+        if args.iac_action == "apply":
+            print(f"applying configuration from '{args.file}'...")
+            await apply_yaml(args.file)
+            print("configuration applied successfully.")
+        elif args.iac_action == "destroy":
+            print(f"destroying configuration from '{args.file}'...")
+            await destroy_yaml(args.file)
+            print("configuration destroyed.")
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# packages vm disk and config backup.
+async def handle_backup(args, provider):
+    try:
+        print(f"backing up VM '{args.name}' to '{args.output_path}'...")
+        from virtual_py.providers.remote.provider import RemoteProvider
+        if isinstance(provider, RemoteProvider):
+            async with provider.client.stream("GET", f"/vms/{args.name}/backup") as response:
+                if response.status_code >= 400:
+                    print(f"error backing up VM: {response.text}", file=sys.stderr)
+                    sys.exit(1)
+                with open(args.output_path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        f.write(chunk)
+        else:
+            from virtual_py.utils.backup import create_backup
+            await create_backup(args.name, args.output_path)
+        print("backup completed successfully.")
+    except Exception as e:
+        print(f"error during backup: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# starts websocket-to-tcp console forwarding tunnel.
+async def handle_console(args, provider):
+    import websockets
+    print(f"starting graphical console tunnel for '{args.name}' on port {args.port}...")
+    
+    from virtual_py.providers.remote.provider import RemoteProvider
+    if isinstance(provider, RemoteProvider):
+        ws_url = f"{provider.base_url.replace('http', 'ws')}/vms/{args.name}/console"
+    else:
+        ws_url = f"ws://localhost:8080/vms/{args.name}/console"
+
+    async def forward_stream(local_reader, local_writer):
+        try:
+            async with websockets.connect(ws_url) as ws:
+                async def local_to_ws():
+                    try:
+                        while True:
+                            data = await local_reader.read(4096)
+                            if not data:
+                                break
+                            await ws.send(data)
+                    except Exception:
+                        pass
+
+                async def ws_to_local():
+                    try:
+                        async for message in ws:
+                            local_writer.write(message)
+                            await local_writer.drain()
+                    except Exception:
+                        pass
+
+                await asyncio.gather(local_to_ws(), ws_to_local())
+        except Exception as e:
+            print(f"tunnel connection failed: {e}", file=sys.stderr)
+        finally:
+            local_writer.close()
+            try:
+                await local_writer.wait_closed()
+            except Exception:
+                pass
+
+    server = await asyncio.start_server(forward_stream, "127.0.0.1", args.port)
+    async with server:
+        print(f"console tunnel is ready. connect VNC to 127.0.0.1:{args.port}")
+        await server.serve_forever()
+
 def handle_daemon(args):
     import uvicorn
     print(f"Starting virtual-pyd daemon on {args.host}:{args.port}...")
@@ -559,6 +643,21 @@ async def run():
     dev_p.add_argument("--switch-name", help="network switch/bridge name (for attach-nic only)")
     dev_p.add_argument("--mac", help="nic MAC address (for detach-nic only)")
 
+    # iac
+    iac_p = subparsers.add_parser("iac", help="declarative infrastructure as code")
+    iac_p.add_argument("iac_action", choices=["apply", "destroy"], help="action to perform")
+    iac_p.add_argument("-f", "--file", required=True, help="path to YAML configuration file")
+
+    # backup
+    backup_p = subparsers.add_parser("backup", help="create compressed backup tarball")
+    backup_p.add_argument("name", help="name of the vm")
+    backup_p.add_argument("output_path", help="target .tar.gz output file path")
+
+    # console
+    console_p = subparsers.add_parser("console", help="open a vnc console tunnel")
+    console_p.add_argument("name", help="name of the vm")
+    console_p.add_argument("--port", type=int, default=5901, help="local VNC listening port")
+
     args = parser.parse_args()
     
     if args.command == "daemon":
@@ -571,7 +670,7 @@ async def run():
 
     # initialize the hypervisor driver provider if not a catalog command.
     provider = None
-    if args.command not in ["catalog", "daemon", "cluster-create"]:
+    if args.command not in ["catalog", "daemon", "cluster-create", "iac"]:
         try:
             if args.remote:
                 provider = get_provider("remote", base_url=args.remote)
@@ -635,6 +734,12 @@ async def run():
         if args.device_action == "detach-nic" and not args.mac:
             parser.error("--mac is required for action 'detach-nic'")
         await handle_device(args, provider)
+    elif args.command == "iac":
+        await handle_iac(args)
+    elif args.command == "backup":
+        await handle_backup(args, provider)
+    elif args.command == "console":
+        await handle_console(args, provider)
 
 def main():
     asyncio.run(run())

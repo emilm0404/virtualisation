@@ -734,3 +734,11 @@ class KVMProvider(VMProvider):
             "--auto-clone"
         ])
         return True
+
+    async def get_console_display(self, vm_name: str) -> str:
+        validate_vm_name(vm_name)
+        try:
+            stdout = await self._run_command([self.virsh_path, "domdisplay", vm_name])
+            return stdout.strip()
+        except Exception:
+            return "localhost:5900"

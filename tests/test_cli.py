@@ -200,3 +200,33 @@ async def test_cli_device():
         provider.add_network_adapter.assert_called_once_with("vm1", "switch1")
         mock_print.assert_any_call("nic attached successfully. mac address: 00:11:22:33:44:55")
 
+@pytest.mark.asyncio
+async def test_cli_iac(tmp_path):
+    yaml_file = tmp_path / "config.yaml"
+    yaml_file.write_text("networks:\n  - name: net1\nvms:\n  - name: vm1\n    cpu: 2\n    ram: 2048\n    disk: /path")
+    
+    test_args = ["cli.py", "iac", "apply", "-f", str(yaml_file)]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.iac.get_provider") as mock_get_provider, \
+         patch("builtins.print"):
+        mock_prov = mock_get_provider.return_value
+        mock_prov.list_networks = AsyncMock(return_value=[])
+        mock_prov.create_network = AsyncMock(return_value=True)
+        mock_prov.get_vm_info = AsyncMock(side_effect=Exception("not found"))
+        mock_prov.create_vm = AsyncMock(return_value=True)
+        await run()
+        mock_prov.create_network.assert_called_once_with("net1", "192.168.100.0/24")
+        mock_prov.create_vm.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_cli_backup():
+    provider = DummyProvider()
+    test_args = ["cli.py", "backup", "vm1", "/tmp/backup.tar.gz"]
+    with patch("sys.argv", test_args), \
+         patch("virtual_py.cli.get_provider", return_value=provider), \
+         patch("virtual_py.utils.backup.create_backup", new_callable=AsyncMock) as mock_backup, \
+         patch("builtins.print"):
+        await run()
+        mock_backup.assert_called_once_with("vm1", "/tmp/backup.tar.gz")
+
+

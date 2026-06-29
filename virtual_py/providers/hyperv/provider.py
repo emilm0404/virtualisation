@@ -696,6 +696,201 @@ class HyperVProvider(VMProvider):
         await self._run_powershell(script)
         return True
 
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        $nic = Add-VMNetworkAdapter -VMName '{vm_name}' -SwitchName '{switch_name}' -Passthru
+        $nic.MacAddress
+        """
+        return await self._run_powershell(script)
+
+    # detaches interface based on unique MAC.
+    async def remove_network_adapter(self, vm_name: str, adapter_mac: str) -> bool:
+        validate_vm_name(vm_name)
+        if not re.match(r"^[0-9a-fA-F:-]+$", adapter_mac):
+            raise ValueError(f"invalid MAC address format: '{adapter_mac}'")
+            
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        $nic = Get-VMNetworkAdapter -VMName '{vm_name}' | Where-Object {{ $_.MacAddress -eq '{adapter_mac}' }}
+        if (-not $nic) {{
+            throw "network adapter with MAC '{adapter_mac}' not found."
+        }}
+        Remove-VMNetworkAdapter -VMNetworkAdapter $nic
+        """
+        await self._run_powershell(script)
+        return True
+
+    # --- Advanced Configuration ---
+    async def enable_secure_boot(self, vm_name: str, enabled: bool) -> bool:
+        validate_vm_name(vm_name)
+        state = "On" if enabled else "Off"
+        script = f"Set-VMFirmware -VMName '{vm_name}' -EnableSecureBoot {state}"
+        await self._run_powershell(script)
+        return True
+
+    async def enable_nested_virtualization(self, vm_name: str, enabled: bool) -> bool:
+        validate_vm_name(vm_name)
+        state = "$true" if enabled else "$false"
+        script = f"Set-VMProcessor -VMName '{vm_name}' -ExposeVirtualizationExtensions {state}"
+        await self._run_powershell(script)
+        return True
+
+    async def enable_tpm(self, vm_name: str, enabled: bool) -> bool:
+        validate_vm_name(vm_name)
+        if enabled:
+            # Enable Key Protector and vTPM
+            script = f"""
+            $ErrorActionPreference = 'Stop'
+            $vm = Get-VM -Name '{vm_name}'
+            $owner = Get-HgsGuardian UntrustedGuardian
+            $kp = New-HgsKeyProtector -Owner $owner -AllowUntrustedRoot
+            Set-VMKeyProtector -VMName '{vm_name}' -KeyProtector $kp.RawData
+            Enable-VMTPM -VMName '{vm_name}'
+            """
+        else:
+            script = f"Disable-VMTPM -VMName '{vm_name}'"
+        await self._run_powershell(script)
+        return True
+
+    # --- Virtual Network Management ---
+    async def create_network(self, name: str, subnet_cidr: str) -> bool:
+        validate_vm_name(name)
+        # In Hyper-V, we create an internal switch.
+        # NAT routing requires New-NetNat, which is more complex, but we'll create the internal switch.
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        $switch = Get-VMSwitch -Name '{name}' -ErrorAction SilentlyContinue
+        if (-not $switch) {{
+            New-VMSwitch -Name '{name}' -SwitchType Internal
+        }}
+        """
+        await self._run_powershell(script)
+        return True
+
+    async def delete_network(self, name: str) -> bool:
+        validate_vm_name(name)
+        script = f"Remove-VMSwitch -Name '{name}' -Force"
+        await self._run_powershell(script)
+        return True
+
+    async def list_networks(self) -> List[str]:
+        script = """
+        $switches = @(Get-VMSwitch)
+        if ($switches) {
+            $switches | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress
+        } else {
+            "[]"
+        }
+        """
+        stdout = await self._run_powershell(script)
+        if not stdout or stdout.strip() == "[]":
+            return []
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, list):
+                return data
+            return [data]
+        except Exception:
+            return []
+
+    # --- Telemetry & Metrics ---
+    async def get_vm_metrics(self, vm_name: str) -> "VMMetrics":
+        from virtual_py.core.models import VMMetrics
+        validate_vm_name(vm_name)
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        $vm = Get-VM -Name '{vm_name}'
+        $vm | Select-Object CPUUsage, @{{Name='MemoryDemand';Expression={{[int]($_.MemoryDemand / 1MB)}}}}, Uptime | ConvertTo-Json -Compress
+        """
+        try:
+            stdout = await self._run_powershell(script)
+            data = json.loads(stdout)
+            
+            uptime_str = data.get("Uptime", {}).get("TotalSeconds", 0)
+            if isinstance(data.get("Uptime"), str):
+                # TimeSpan string parsing if PS outputs string
+                uptime_str = 0 # simplified
+            elif isinstance(data.get("Uptime"), dict):
+                uptime_str = data["Uptime"].get("TotalSeconds", 0)
+                
+            return VMMetrics(
+                cpu_usage_percent=float(data.get("CPUUsage", 0)),
+                memory_demand_mb=int(data.get("MemoryDemand", 0)),
+                uptime_seconds=int(uptime_str)
+            )
+        except Exception as e:
+            return VMMetrics(0.0, 0, 0)
+
+    async def migrate_vm(self, vm_name: str, target_host: str, **kwargs) -> bool:
+        validate_vm_name(vm_name)
+        if not re.match(r"^[a-zA-Z0-9.-]+$", target_host):
+            raise ValueError(f"invalid target host address: '{target_host}'")
+        
+        script = f"Move-VM -Name '{vm_name}' -DestinationHost '{target_host}' -ErrorAction Stop"
+        await self._run_powershell(script)
+        return True
+
+    async def create_storage_pool(self, name: str, path: str) -> bool:
+        validate_vm_name(name)
+        validate_path(path)
+        esc_path = path.replace("'", "''")
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        if (-not (Test-Path '{esc_path}')) {{
+            New-Item -ItemType Directory -Path '{esc_path}' -Force | Out-Null
+        }}
+        Set-VMHost -VirtualHardDiskPath '{esc_path}' -ErrorAction SilentlyContinue
+        """
+        await self._run_powershell(script)
+        return True
+
+    async def delete_storage_pool(self, name: str) -> bool:
+        validate_vm_name(name)
+        # Hyper-V doesn't have explicit storage pools — this is a no-op placeholder
+        return True
+
+    async def list_storage_pools(self) -> List[str]:
+        script = """
+        $host_info = Get-VMHost
+        @($host_info.VirtualHardDiskPath, $host_info.VirtualMachinePath) | ConvertTo-Json -Compress
+        """
+        stdout = await self._run_powershell(script)
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, list):
+                return [p for p in data if p]
+            return [data] if data else []
+        except Exception:
+            return []
+
+    async def list_snapshots(self, vm_name: str) -> List[str]:
+        validate_vm_name(vm_name)
+        script = f"""
+        Get-VMSnapshot -VMName '{vm_name}' | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress
+        """
+        stdout = await self._run_powershell(script)
+        try:
+            data = json.loads(stdout)
+            if isinstance(data, list):
+                return data
+            return [data] if data else []
+        except Exception:
+            return []
+
+    async def export_vm(self, vm_name: str, export_path: str) -> bool:
+        validate_vm_name(vm_name)
+        validate_path(export_path)
+        esc_path = export_path.replace("'", "''")
+        script = f"""
+        $ErrorActionPreference = 'Stop'
+        if (-not (Test-Path '{esc_path}')) {{
+            New-Item -ItemType Directory -Path '{esc_path}' -Force | Out-Null
+        }}
+        Export-VM -Name '{vm_name}' -Path '{esc_path}'
+        """
+        await self._run_powershell(script)
+        return True
+
     async def clone_vm(self, vm_name: str, clone_name: str) -> bool:
         validate_vm_name(vm_name)
         validate_vm_name(clone_name)
@@ -712,3 +907,7 @@ class HyperVProvider(VMProvider):
             """
             await self._run_powershell(script)
         return True
+
+    async def get_console_display(self, vm_name: str) -> str:
+        validate_vm_name(vm_name)
+        return "localhost:5900"

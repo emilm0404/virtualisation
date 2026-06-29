@@ -179,3 +179,7 @@ class VMProvider(abc.ABC):
     @abc.abstractmethod
     async def clone_vm(self, vm_name: str, clone_name: str) -> bool:
         pass
+
+    @abc.abstractmethod
+    async def get_console_display(self, vm_name: str) -> str:
+        pass

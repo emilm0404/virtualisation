@@ -54,6 +54,7 @@ class MockProvider(VMProvider):
     async def delete_storage_pool(self, name): return True
     async def list_storage_pools(self): return ["pool1"]
     async def list_snapshots(self, vm_name): return ["snap1"]
+    async def get_console_display(self, vm_name): return "snap1"
 
 app.dependency_overrides[get_vm_provider] = lambda: MockProvider()
 client = TestClient(app)
@@ -142,4 +143,22 @@ def test_api_devices():
 
     res = client.delete("/vms/testvm/network-adapters/mac")
     assert res.status_code == 200
+
+def test_api_console_display():
+    res = client.get("/vms/testvm/console-display")
+    assert res.status_code == 200
+    assert res.json() == "snap1"
+
+def test_api_backup():
+    from unittest.mock import patch
+    with patch("virtual_py.utils.backup.create_backup") as mock_backup:
+        def side_effect(vm_name, path):
+            with open(path, "wb") as f:
+                f.write(b"dummybackup")
+        mock_backup.side_effect = side_effect
+        
+        res = client.get("/vms/testvm/backup")
+        assert res.status_code == 200
+        assert res.content == b"dummybackup"
+
 
