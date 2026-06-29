@@ -56,7 +56,7 @@ bool WhpxBackend::setup_vm() {
     return true;
 }
 
-bool WhpxBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
+bool WhpxBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr, uint32_t slot) {
     HRESULT hr = WHvMapGpaRange(partition_, host_addr, gpa, size, 
                                 WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite | WHvMapGpaRangeFlagExecute);
     if (FAILED(hr)) {
@@ -65,6 +65,7 @@ bool WhpxBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
     }
     host_ram_ = host_addr;
     ram_size_ = size;
+    mapped_regions_[gpa] = host_addr;
     return true;
 }
 
@@ -149,6 +150,31 @@ bool WhpxBackend::run_loop() {
                 WHV_REGISTER_VALUE rip_val;
                 WHvGetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);
                 rip_val.Reg64 += io.InstructionByteCount;
+                WHvSetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);
+                break;
+            }
+            case WHvRunVpExitReasonMemoryAccess: {
+                auto& mem = exit_context.MemoryAccess;
+                if (mem.Gpa == 0x3FFFF000 && mem.AccessInfo.IsWrite) {
+                    void* host_vram = mapped_regions_[0x40000000];
+                    if (host_vram) {
+                        uint32_t* cmd_buf = (uint32_t*)host_vram;
+                        std::cout << "[host x-gpu] doorbell rung! command buffer head: 0x" 
+                                  << std::hex << *cmd_buf << std::dec << std::endl;
+                        if (*cmd_buf == 0xFF0000) {
+                            std::cout << "[host x-gpu renderer] received framebuffer trigger! rendering red frame (color 0xFF0000)!" << std::endl;
+                        }
+                    }
+                }
+                
+                WHV_REGISTER_NAME rip_name = WHvX64RegisterRip;
+                WHV_REGISTER_VALUE rip_val;
+                WHvGetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);
+                if (mem.InstructionByteCount > 0) {
+                    rip_val.Reg64 += mem.InstructionByteCount;
+                } else {
+                    rip_val.Reg64 += 3; // basic default instruction advance step
+                }
                 WHvSetVirtualProcessorRegisters(partition_, 0, &rip_name, 1, &rip_val);
                 break;
             }

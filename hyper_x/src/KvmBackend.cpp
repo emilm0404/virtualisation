@@ -46,9 +46,9 @@ bool KvmBackend::setup_vm() {
     return true;
 }
 
-bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
+bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr, uint32_t slot) {
     struct kvm_userspace_memory_region region = {};
-    region.slot = 0;
+    region.slot = slot;
     region.guest_phys_addr = gpa;
     region.memory_size = size;
     region.userspace_addr = (uint64_t)host_addr;
@@ -59,6 +59,7 @@ bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) {
     }
     host_ram_ = host_addr;
     ram_size_ = size;
+    mapped_regions_[gpa] = host_addr;
     return true;
 }
 
@@ -152,6 +153,20 @@ bool KvmBackend::run_loop() {
                 }
                 break;
             }
+            case KVM_EXIT_MMIO: {
+                if (run->mmio.phys_addr == 0x3FFFF000 && run->mmio.is_write) {
+                    void* host_vram = mapped_regions_[0x40000000];
+                    if (host_vram) {
+                        uint32_t* cmd_buf = (uint32_t*)host_vram;
+                        std::cout << "[host x-gpu] doorbell rung! command buffer head: 0x" 
+                                  << std::hex << *cmd_buf << std::dec << std::endl;
+                        if (*cmd_buf == 0xFF0000) {
+                            std::cout << "[host x-gpu renderer] received framebuffer trigger! rendering red frame (color 0xFF0000)!" << std::endl;
+                        }
+                    }
+                }
+                break;
+            }
             case KVM_EXIT_HLT:
                 std::cout << "\n[guest halt] HLT execution exit." << std::endl;
                 running = false;
@@ -173,8 +188,8 @@ bool KvmBackend::initialize() {
     return false;
 }
 bool KvmBackend::setup_vm() { return false; }
-bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr) { return false; }
-bool KvmBackend::setup_vcpu(uint64_t rip) { return false; }
+bool KvmBackend::map_guest_memory(uint64_t gpa, size_t size, void* host_addr, uint32_t slot) { return false; }
+bool KvmBackend::setup_vcpu(uint64_t rip, uint64_t boot_params_gpa) { return false; }
 bool KvmBackend::run_loop() { return false; }
 
 #endif

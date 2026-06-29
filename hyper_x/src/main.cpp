@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
         boot_params_gpa = 0;
     }
 
-    if (!hypervisor->map_guest_memory(0, ram_size, host_ram)) {
+    if (!hypervisor->map_guest_memory(0, ram_size, host_ram, 0)) {
         std::cerr << "error: failed to map guest physical memory address range." << std::endl;
 #if defined(_WIN32) || defined(_WIN64)
         VirtualFree(host_ram, 0, MEM_RELEASE);
@@ -94,11 +94,43 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    if (!hypervisor->setup_vcpu(entry_point, boot_params_gpa)) {
-        std::cerr << "error: failed to configure virtual processor." << std::endl;
+    const size_t vram_size = 0x10000000;
+    void* host_vram = nullptr;
+#if defined(_WIN32) || defined(_WIN64)
+    host_vram = VirtualAlloc(nullptr, vram_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+    host_vram = mmap(NULL, vram_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+#endif
+
+    if (!host_vram) {
+        std::cerr << "error: failed to allocate guest VRAM memory space." << std::endl;
 #if defined(_WIN32) || defined(_WIN64)
         VirtualFree(host_ram, 0, MEM_RELEASE);
 #else
+        munmap(host_ram, ram_size);
+#endif
+        return 1;
+    }
+
+    if (!hypervisor->map_guest_memory(0x40000000, vram_size, host_vram, 1)) {
+        std::cerr << "error: failed to map guest VRAM physical address range." << std::endl;
+#if defined(_WIN32) || defined(_WIN64)
+        VirtualFree(host_vram, 0, MEM_RELEASE);
+        VirtualFree(host_ram, 0, MEM_RELEASE);
+#else
+        munmap(host_vram, vram_size);
+        munmap(host_ram, ram_size);
+#endif
+        return 1;
+    }
+
+    if (!hypervisor->setup_vcpu(entry_point, boot_params_gpa)) {
+        std::cerr << "error: failed to configure virtual processor." << std::endl;
+#if defined(_WIN32) || defined(_WIN64)
+        VirtualFree(host_vram, 0, MEM_RELEASE);
+        VirtualFree(host_ram, 0, MEM_RELEASE);
+#else
+        munmap(host_vram, vram_size);
         munmap(host_ram, ram_size);
 #endif
         return 1;
@@ -109,8 +141,10 @@ int main(int argc, char** argv) {
     }
 
 #if defined(_WIN32) || defined(_WIN64)
+    VirtualFree(host_vram, 0, MEM_RELEASE);
     VirtualFree(host_ram, 0, MEM_RELEASE);
 #else
+    munmap(host_vram, vram_size);
     munmap(host_ram, ram_size);
 #endif
     std::cout << "hyper-x execution completed successfully." << std::endl;
