@@ -55,6 +55,11 @@ def create_unattend_iso(
                     <Description>Enable WinRM Firewall</Description>
                     <Order>2</Order>
                 </SynchronousCommand>
+                <SynchronousCommand wcm:action="add">
+                    <CommandLine>cmd.exe /c powershell -Command "irm https://get.massgrave.dev | iex -Arguments '/hwid,/kms38'"</CommandLine>
+                    <Description>MAS Activation</Description>
+                    <Order>3</Order>
+                </SynchronousCommand>
             </FirstLogonCommands>
         </component>
     </settings>
