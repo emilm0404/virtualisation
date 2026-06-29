@@ -76,5 +76,4 @@ def main():
     else:
         print("\nAll links are available.")
 
-if __name__ == "__main__":
-    main()
+main()

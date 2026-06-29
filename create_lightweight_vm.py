@@ -58,8 +58,7 @@ async def main():
     print(f"\nsuccess! vm status: {info.name} is {info.status}")
     print("you can open hyper-v manager to see the alpine console booting.")
 
-if __name__ == "__main__":
-    if sys.platform != "win32":
-        print("this script is designed for hyper-v on windows hosts only.")
-        sys.exit(1)
-    asyncio.run(main())
+if sys.platform != "win32":
+    print("this script is designed for hyper-v on windows hosts only.")
+    sys.exit(1)
+asyncio.run(main())

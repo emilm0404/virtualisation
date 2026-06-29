@@ -72,8 +72,7 @@ async def main():
     except Exception as e:
         print(f"failed final check: {e}")
 
-if __name__ == "__main__":
-    if sys.platform != "win32":
-        print("this script is designed for hyper-v on windows hosts.")
-        sys.exit(1)
-    asyncio.run(main())
+if sys.platform != "win32":
+    print("this script is designed for hyper-v on windows hosts.")
+    sys.exit(1)
+asyncio.run(main())
