@@ -9,7 +9,7 @@ from virtual_py.api.models import (
     NetworkCreatePayload, VMInfoResponse, VMMetricsResponse,
     HostMetricsResponse, CheckpointPayload, VMMigratePayload,
     GuestExecutePayload, GuestFileCopyPayload, DiskAttachPayload,
-    DiskDetachPayload, AdapterAttachPayload
+    DiskDetachPayload, AdapterAttachPayload, GPUAttachPayload
 )
 from virtual_py import get_provider
 from virtual_py.core.interfaces import VMProvider
@@ -417,3 +417,18 @@ async def console_websocket(websocket: WebSocket, name: str, provider: VMProvide
     t1 = asyncio.create_task(ws_to_tcp())
     t2 = asyncio.create_task(tcp_to_ws())
     await asyncio.gather(t1, t2, return_exceptions=True)
+
+@app.post("/vms/{name}/gpu")
+async def attach_gpu_route(name: str, payload: GPUAttachPayload, provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        await provider.attach_gpu(name, payload.mode, pci_address=payload.pci_address)
+        return {"message": f"Successfully attached GPU in {payload.mode} mode to VM '{name}'"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/system/gpus")
+async def list_system_gpus(provider: VMProvider = Depends(get_vm_provider)):
+    try:
+        return await provider.detect_host_gpus()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

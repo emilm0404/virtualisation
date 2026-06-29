@@ -55,6 +55,8 @@ class MockProvider(VMProvider):
     async def list_storage_pools(self): return ["pool1"]
     async def list_snapshots(self, vm_name): return ["snap1"]
     async def get_console_display(self, vm_name): return "snap1"
+    async def attach_gpu(self, vm_name, mode="shared", **kwargs): return True
+    async def detect_host_gpus(self): return [{"gpu": "Mock GPU", "vendor_id": "0x0000", "device_id": "0x0000", "vram_mb": "4096", "pci_address": "0000:01:00.0"}]
 
 app.dependency_overrides[get_vm_provider] = lambda: MockProvider()
 client = TestClient(app)
@@ -160,5 +162,15 @@ def test_api_backup():
         res = client.get("/vms/testvm/backup")
         assert res.status_code == 200
         assert res.content == b"dummybackup"
+
+def test_api_gpu():
+    res = client.post("/vms/testvm/gpu", json={"mode": "shared"})
+    assert res.status_code == 200
+
+def test_api_system_gpus():
+    res = client.get("/system/gpus")
+    assert res.status_code == 200
+    assert len(res.json()) > 0
+    assert res.json()[0]["gpu"] == "Mock GPU"
 
 

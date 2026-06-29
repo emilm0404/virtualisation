@@ -73,3 +73,7 @@ class DiskDetachPayload(BaseModel):
 class AdapterAttachPayload(BaseModel):
     switch_name: str
 
+class GPUAttachPayload(BaseModel):
+    mode: str = "shared"
+    pci_address: Optional[str] = None
+

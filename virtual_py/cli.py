@@ -264,7 +264,23 @@ async def handle_device(args, provider):
             print(f"detaching nic mac '{args.mac}' from vm '{args.name}'...")
             await provider.remove_network_adapter(args.name, args.mac)
             print("nic detached successfully.")
-    except VMException as e:
+        elif args.device_action == "attach-gpu":
+            print(f"attaching GPU in {args.mode} mode to VM '{args.name}'...")
+            await provider.attach_gpu(args.name, args.mode, pci_address=args.pci_address)
+            print("GPU attached successfully.")
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# lists host gpu hardware.
+async def handle_system(args, provider):
+    try:
+        if args.system_action == "gpus":
+            print("detecting host graphics cards...")
+            gpus = await provider.detect_host_gpus()
+            for i, g in enumerate(gpus):
+                print(f"GPU [{i}]: {g.get('gpu')} | Vendor: {g.get('vendor_id')} | Device: {g.get('device_id')} | VRAM: {g.get('vram_mb')}MB | PCI Address: {g.get('pci_address')}")
+    except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -636,12 +652,18 @@ async def run():
 
     # device hot-plugging
     dev_p = subparsers.add_parser("device", help="manage hardware devices (disks, nics)")
-    dev_p.add_argument("device_action", choices=["attach-disk", "detach-disk", "attach-nic", "detach-nic"], help="action to perform")
+    dev_p.add_argument("device_action", choices=["attach-disk", "detach-disk", "attach-nic", "detach-nic", "attach-gpu"], help="action to perform")
     dev_p.add_argument("name", help="name of the vm")
     dev_p.add_argument("--disk-path", help="disk file path (for attach/detach disk)")
     dev_p.add_argument("--controller", help="controller type (for attach-disk only)")
     dev_p.add_argument("--switch-name", help="network switch/bridge name (for attach-nic only)")
     dev_p.add_argument("--mac", help="nic MAC address (for detach-nic only)")
+    dev_p.add_argument("--mode", default="shared", choices=["shared", "passthrough"], help="gpu mode (shared or passthrough)")
+    dev_p.add_argument("--pci-address", help="pci address for gpu passthrough")
+
+    # system diagnostics
+    sys_diag_p = subparsers.add_parser("system", help="query system attributes")
+    sys_diag_p.add_argument("system_action", choices=["gpus"], help="action to perform")
 
     # iac
     iac_p = subparsers.add_parser("iac", help="declarative infrastructure as code")
@@ -740,6 +762,8 @@ async def run():
         await handle_backup(args, provider)
     elif args.command == "console":
         await handle_console(args, provider)
+    elif args.command == "system":
+        await handle_system(args, provider)
 
 def main():
     asyncio.run(run())

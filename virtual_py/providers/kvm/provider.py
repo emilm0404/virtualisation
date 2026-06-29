@@ -6,6 +6,7 @@ import base64
 import random
 import shutil
 from typing import List, Optional
+import xml.etree.ElementTree as ET
 from virtual_py.core.interfaces import VMProvider
 from virtual_py.core.models import VMInfo, VMStatus
 from virtual_py.utils.validation import (
@@ -742,3 +743,60 @@ class KVMProvider(VMProvider):
             return stdout.strip()
         except Exception:
             return "localhost:5900"
+
+    async def attach_gpu(self, vm_name: str, mode: str = "shared", **kwargs) -> bool:
+        validate_vm_name(vm_name)
+        stdout = await self._run_command([self.virsh_path, "dumpxml", vm_name])
+        
+        root = ET.fromstring(stdout)
+        devices = root.find("devices")
+        if devices is None:
+            raise HypervisorExecutionError(command="dumpxml", returncode=-1, stdout="", stderr="no devices block in xml")
+            
+        if mode == "shared":
+            # remove old video tags.
+            for video in list(devices.findall("video")):
+                devices.remove(video)
+            
+            # create accelerated virtio element.
+            video = ET.SubElement(devices, "video")
+            model = ET.SubElement(video, "model", type="virtio", heads="1", primary="yes")
+            ET.SubElement(model, "acceleration", accel3d="yes")
+        else:
+            # full pci passthrough.
+            pci_addr = kwargs.get("pci_address")
+            if not pci_addr:
+                gpus = await self.detect_host_gpus()
+                if gpus:
+                    pci_addr = gpus[0].get("pci_address")
+            if not pci_addr:
+                pci_addr = "0000:01:00.0"
+                
+            # parse e.g. 0000:01:00.0.
+            parts = pci_addr.replace(".", ":").split(":")
+            if len(parts) >= 4:
+                domain_val = f"0x{parts[0]}"
+                bus_val = f"0x{parts[1]}"
+                slot_val = f"0x{parts[2]}"
+                func_val = f"0x{parts[3]}"
+            else:
+                domain_val, bus_val, slot_val, func_val = "0x0000", "0x01", "0x00", "0x0"
+                
+            # create hostdev entry.
+            hostdev = ET.SubElement(devices, "hostdev", mode="subsystem", type="pci", managed="yes")
+            source = ET.SubElement(hostdev, "source")
+            ET.SubElement(source, "address", domain=domain_val, bus=bus_val, slot=slot_val, function=func_val)
+            
+        import xml.etree.ElementTree as ET
+        import tempfile
+        xml_str = ET.tostring(root, encoding="utf-8").decode("utf-8")
+        fd, path = tempfile.mkstemp(suffix=".xml")
+        os.close(fd)
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(xml_str)
+            await self._run_command([self.virsh_path, "define", path])
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+        return True

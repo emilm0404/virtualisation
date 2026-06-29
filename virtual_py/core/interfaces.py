@@ -183,3 +183,44 @@ class VMProvider(abc.ABC):
     @abc.abstractmethod
     async def get_console_display(self, vm_name: str) -> str:
         pass
+
+    @abc.abstractmethod
+    async def attach_gpu(self, vm_name: str, mode: str = "shared", **kwargs) -> bool:
+        pass
+
+    async def detect_host_gpus(self) -> List[dict]:
+        import os
+        from virtual_py.utils.compiler import compile_gpu_helper, get_gpu_helper_binary_path
+        binary_path = get_gpu_helper_binary_path()
+        if not os.path.exists(binary_path):
+            try:
+                compile_gpu_helper()
+            except Exception:
+                pass
+        
+        if not os.path.exists(binary_path):
+            return [{"gpu": "Mock GPU", "vendor_id": "0x0000", "device_id": "0x0000", "vram_mb": "4096", "pci_address": "0000:01:00.0"}]
+            
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                binary_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            
+            gpus = []
+            for line in stdout.decode("utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line.startswith("gpu:"):
+                    parts = line.split("|")
+                    gpu_info = {}
+                    for p in parts:
+                        if ":" in p:
+                            k, v = p.split(":", 1)
+                            gpu_info[k] = v
+                    if gpu_info:
+                        gpus.append(gpu_info)
+            return gpus
+        except Exception:
+            return [{"gpu": "Mock GPU", "vendor_id": "0x0000", "device_id": "0x0000", "vram_mb": "4096", "pci_address": "0000:01:00.0"}]

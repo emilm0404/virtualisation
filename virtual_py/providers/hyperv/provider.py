@@ -911,3 +911,28 @@ class HyperVProvider(VMProvider):
     async def get_console_display(self, vm_name: str) -> str:
         validate_vm_name(vm_name)
         return "localhost:5900"
+
+    async def attach_gpu(self, vm_name: str, mode: str = "shared", **kwargs) -> bool:
+        validate_vm_name(vm_name)
+        if mode == "shared":
+            script = f"""
+            $ErrorActionPreference = 'Stop'
+            Add-VMGpuPartitionAdapter -VMName '{vm_name}' -ErrorAction SilentlyContinue
+            Set-VMGpuPartitionAdapter -VMName '{vm_name}' -MinPartitionVRAM 80000000 -MaxPartitionVRAM 100000000 -OptimalPartitionVRAM 100000000 -MinPartitionEncode 80000000 -MaxPartitionEncode 100000000 -OptimalPartitionEncode 100000000 -MinPartitionDecode 80000000 -MaxPartitionDecode 100000000 -OptimalPartitionDecode 100000000 -MinPartitionCompute 80000000 -MaxPartitionCompute 100000000 -OptimalPartitionCompute 100000000
+            """
+        else:
+            pci_addr = kwargs.get("pci_address")
+            if not pci_addr:
+                gpus = await self.detect_host_gpus()
+                if gpus:
+                    pci_addr = gpus[0].get("pci_address")
+            if not pci_addr:
+                pci_addr = "PCIROOT(0)#PCI(0200)" # fallback location path
+                
+            script = f"""
+            $ErrorActionPreference = 'Stop'
+            Dismount-VMHostAssignableDevice -LocationPath '{pci_addr}' -Force -ErrorAction SilentlyContinue
+            Add-VMPciDeviceAdapter -VMName '{vm_name}' -LocationPath '{pci_addr}'
+            """
+        await self._run_powershell(script)
+        return True

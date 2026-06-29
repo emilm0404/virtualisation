@@ -193,3 +193,11 @@ class RemoteProvider(VMProvider):
 
     async def get_console_display(self, vm_name: str) -> str:
         return await self._request("GET", f"/vms/{vm_name}/console-display")
+
+    async def attach_gpu(self, vm_name: str, mode: str = "shared", **kwargs) -> bool:
+        pci = kwargs.get("pci_address")
+        await self._request("POST", f"/vms/{vm_name}/gpu", json={"mode": mode, "pci_address": pci})
+        return True
+
+    async def detect_host_gpus(self) -> List[dict]:
+        return await self._request("GET", "/system/gpus")
